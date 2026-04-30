@@ -1,8 +1,70 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@variant dark (&:where(.dark, .dark *));
 
-html{
-    background: black;
+html {
+  background-color: #fafafa;
+}
+
+html.dark {
+  background-color: #09090b;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
+}
+
+html.dark * {
+  scrollbar-color: #3f3f46 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #d4d4d8;
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #a1a1aa;
+}
+
+html.dark *::-webkit-scrollbar-thumb {
+  background-color: #3f3f46;
+}
+
+html.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: #52525b;
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-in {
+  animation: msg-in 0.2s ease-out forwards;
+}
+
+@keyframes streaming-glow {
+  0%, 100% { box-shadow: 0 0 0 0px rgba(99, 102, 241, 0); }
+  50%       { box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12); }
+}
+
+.streaming-bubble {
+  animation: streaming-glow 2s ease-in-out infinite;
 }

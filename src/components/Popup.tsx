@@ -1,39 +1,47 @@
+import { CheckIcon } from "./icons"
+
 interface PopupProps {
-    closeMenu: () => void;
-    changeModel: (modelName: string) => void;
-    availableModels: string[];
+  closeMenu: () => void
+  changeModel: (modelName: string) => void
+  availableModels: string[]
+  activeModel?: string
 }
 
-function Popup({ closeMenu, changeModel, availableModels }: PopupProps) {
-    return (
-        <div className="fixed inset-0 z-[9999] flex justify-center items-center bg-black/40 backdrop-blur-sm" onClick={closeMenu}>
-            <div className='fixed inset-0 m-auto z-[9999] w-1/2 h-fit bg-[#ffffff40] backdrop-blur-md border border-[#ffffff80] rounded-xl p-8 flex flex-col gap-6 shadow-2xl'>
-                <h1 className='text-2xl text-white font-bold text-center border-b border-white/20 pb-4'>
-                    Sélectionnez un modèle
-                </h1>
-                <div className='grid grid-cols-2 gap-4'>
-                    {availableModels.map((modelName) => (
-                        <div 
-                            key={modelName} 
-                            onClick={() => {
-                                changeModel(modelName);
-                                closeMenu();
-                            }}
-                            className='p-4 text-center bg-[#ffffff20] hover:bg-[#ffffff40] border border-[#ffffff60] rounded-lg cursor-pointer text-white transition-all font-medium'
-                        >
-                            {modelName}
-                        </div>
-                    ))}
-                </div>
-                <button 
-                    onClick={closeMenu}
-                    className="mt-2 text-sm text-gray-300 hover:text-white underline self-center"
-                >
-                    Annuler
-                </button>
-            </div>
-        </div>
-    )
+function Popup({ closeMenu, changeModel, availableModels, activeModel }: PopupProps) {
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={closeMenu} />
+      <div className="absolute bottom-full right-0 mb-2 z-50 w-56 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-lg overflow-hidden">
+        {availableModels.length === 0 ? (
+          <div className="px-4 py-6 text-center">
+            <p className="text-xs text-zinc-400 dark:text-zinc-500 leading-relaxed">
+              Aucun modèle disponible.<br />Vérifiez qu'Ollama est lancé.
+            </p>
+          </div>
+        ) : (
+          <div className="p-1 max-h-64 overflow-y-auto">
+            {availableModels.map((modelName) => (
+              <button
+                key={modelName}
+                onClick={() => {
+                  changeModel(modelName)
+                  closeMenu()
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer flex items-center justify-between gap-2 ${
+                  modelName === activeModel
+                    ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50'
+                    : 'text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800'
+                }`}
+              >
+                <span className="truncate">{modelName}</span>
+                {modelName === activeModel && <CheckIcon />}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  )
 }
 
 export default Popup

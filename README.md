@@ -1,58 +1,55 @@
 # Neural-Port
 
-**Neural-Port** est une interface client haute performance pour les modèles de langage locaux (LLMs). Elle agit comme une couche de visualisation réactive au-dessus de l'API **Ollama**.
+Neural-Port est une interface de chat conçue pour discuter avec vos modèles Ollama. Tout fonctionne en local, rien ne quitte votre machine.
 
-Conçue pour garantir une confidentialité totale des données (Local-First), cette application exploite l'écosystème **React** avec une architecture **TypeScript** stricte pour assurer robustesse et maintenabilité.
+L'idée est simple : profiter d'une interface soignée sans sacrifier la confidentialité.
 
-## 🚀 Installation & Démarrage
+## Fonctionnalités
 
-### Pré-requis
+**Statut de génération en temps réel**
 
-* **Node.js** (v20+ recommandé)
-* **Ollama** (Service actif en arrière-plan)
+Quand vous patientez après avoir envoyé un message, l'interface vous indique précisément ce qui se passe. Si le modèle n'était pas en mémoire, vous voyez qu'il charge, puis qu'il traite votre contexte une fois prêt. Pour les modèles de raisonnement comme DeepSeek-R1 ou QwQ, une étape "Réflexion en cours" s'affiche pendant la phase de pensée, détectée directement dans le flux de l'API Ollama.
 
-### Initialisation des modèles
+**Sélection de modèles automatique**
 
-Assurez-vous d'avoir installé des modèles avec la commande suivante :
+Tous vos modèles installés dans Ollama apparaissent dans le menu de sélection. Ajoutez-en un nouveau pendant que l'application tourne, il sera disponible au prochain clic.
+
+**Rendu Markdown avec coloration syntaxique**
+
+Les réponses sont affichées en Markdown. Les blocs de code sont surlignés automatiquement selon le langage détecté.
+
+**Streaming et mode sombre**
+
+Le texte s'affiche au fil de la génération. Un bouton en haut à droite bascule entre le thème clair et le thème sombre.
+
+## Prérequis
+
+- Node.js v20+
+- [Ollama](https://ollama.com) installé et lancé
+
+## Installation
 
 ```bash
-ollama pull <nom_du_modèle>
+git clone https://github.com/meteorelevrai/Neural-Port.git
+cd Neural-Port
+npm install
+npm run dev
 ```
 
-- Exemples de modèles testés:
+Accessible sur `http://localhost:5173`.
+
+## Ajouter des modèles
+
+Neural-Port détecte automatiquement les modèles disponibles. Pour en installer depuis Ollama :
 
 ```bash
-ollama pull gemma3:1b
 ollama pull llama3.2:3b
-ollama pull qwen3:4b
 ollama pull mistral:7b
+ollama pull deepseek-r1:8b   # pour tester le raisonnement
 ```
 
-### Déploiement Local
-
-1.  Cloner le dépôt :
-    ```bash
-    git clone https://github.com/meteorelevrai/Neural-Port.git
-    cd neural-port
-    ```
-
-2.  Installer les dépendances :
-    ```bash
-    npm install
-    ```
-
-3.  Lancer le serveur de développement :
-    ```bash
-    npm run dev
-    ```
-
-L'application sera accessible sur `http://localhost:5173`.
-
-## ⚖️ Licence
+## Licence
 
 **Copyright © 2026 MeteoreLeVrai. Tous droits réservés.**
 
-Ce logiciel est propriétaire.
-
-* **Autorisé :** Téléchargement, installation, exécution et modification à des fins strictement personnelles et privées (usage local uniquement).
-* **Interdit :** Toute redistribution (de l'original ou d'une version modifiée), sous-licence, usage commercial ou vente, sans autorisation écrite explicite de l'auteur.
+Usage personnel et privé autorisé. Toute redistribution ou usage commercial est interdit sans accord écrit de l'auteur.
