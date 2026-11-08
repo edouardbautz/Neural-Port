@@ -10,6 +10,10 @@ interface MsgProps extends Message {
   isStreaming?: boolean
 }
 
+function formatNumber(n: number) {
+  return n.toLocaleString("fr-FR", { maximumFractionDigits: 1 })
+}
+
 function CopyIcon() {
   return (
     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -19,8 +23,14 @@ function CopyIcon() {
   )
 }
 
-function Msg({ role, content, isStreaming = false }: MsgProps) {
+function Msg({ role, content, tps, duration, tokens, isStreaming = false }: MsgProps) {
   const [copied, setCopied] = useState(false)
+
+  // Statistiques réelles fournies par Ollama (null si l'API ne les renvoie pas)
+  const stats: string[] = []
+  if (tokens != null) stats.push(`${formatNumber(tokens)} tokens`)
+  if (duration != null) stats.push(`${formatNumber(duration)} s`)
+  if (tps != null) stats.push(`${formatNumber(tps)} tokens/s`)
 
   function handleCopy() {
     navigator.clipboard.writeText(content)
@@ -39,7 +49,7 @@ function Msg({ role, content, isStreaming = false }: MsgProps) {
   }
 
   return (
-    <div className="flex justify-start msg-in group/msg">
+    <div className="flex flex-col items-start gap-1.5 msg-in group/msg">
       <div className={`relative max-w-[80%] px-4 py-3 rounded-2xl rounded-tl-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm transition-shadow${isStreaming ? " streaming-bubble" : ""}`}>
         {!isStreaming && (
           <button
@@ -68,6 +78,16 @@ function Msg({ role, content, isStreaming = false }: MsgProps) {
           </Markdown>
         </div>
       </div>
+      {!isStreaming && stats.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-1.5 px-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 tabular-nums">
+          {stats.map((s, i) => (
+            <span key={i} className="flex items-center gap-x-1.5">
+              {i > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
+              {s}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

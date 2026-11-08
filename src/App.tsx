@@ -9,6 +9,9 @@ const OLLAMA_URL = "http://localhost:11434"
 export interface Message {
   role: "user" | "assistant"
   content: string
+  tps?: number       // tokens/seconde (valeur réelle renvoyée par Ollama)
+  duration?: number  // durée de génération en secondes (valeur réelle)
+  tokens?: number    // nombre de tokens générés (valeur réelle)
 }
 
 export interface OllamaModelResponse {
@@ -314,7 +317,28 @@ function App() {
 
         for (const line of lines) {
           try {
-            const chunk = JSON.parse(line) as { message?: { content: string; thinking?: string } }
+            const chunk = JSON.parse(line) as {
+              message?: { content: string; thinking?: string }
+              done?: boolean
+              eval_count?: number
+              eval_duration?: number
+            }
+
+            if (chunk.done) {
+              // Valeurs réelles renvoyées par Ollama à la fin du stream.
+              // On ne les garde que si elles sont présentes : jamais inventées.
+              const tokens = chunk.eval_count
+              const sec = (chunk.eval_duration ?? 0) / 1e9
+              if (tokens && tokens > 0 && sec > 0) {
+                updateMessages(convId, prev => {
+                  const last = prev[prev.length - 1]
+                  if (!last || last.role !== "assistant") return prev
+                  const arr = [...prev]
+                  arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens }
+                  return arr
+                })
+              }
+            }
 
             const hasThinking = !!chunk.message?.thinking
             const hasContent = !!chunk.message?.content
@@ -444,6 +468,9 @@ function App() {
                 key={index}
                 role={msg.role}
                 content={msg.content}
+                tps={msg.tps}
+                duration={msg.duration}
+                tokens={msg.tokens}
                 isStreaming={isStreaming && !isThinking && index === messages.length - 1}
               />
             ))}
