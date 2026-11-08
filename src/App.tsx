@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Popup from './components/Popup'
 import Msg from './components/Msg'
+import Sidebar from './components/Sidebar'
+import { MenuIcon } from './components/icons'
 
 const OLLAMA_URL = "http://localhost:11434"
 
@@ -14,6 +16,22 @@ export interface OllamaModelResponse {
     name: string
     model: string
   }[]
+}
+
+export interface Conversation {
+  id: string
+  title: string
+  model?: string
+  messages: Message[]
+  createdAt: number
+  updatedAt: number
+}
+
+const HISTORY_KEY = "neural-port-history"
+const ACTIVE_KEY = "neural-port-active"
+
+function makeId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
 async function checkModelLoaded(model: string): Promise<boolean> {
@@ -76,7 +94,26 @@ function App() {
   const [isPopupOpen, setIsPopupOpen] = useState(false)
   const [activeModel, setActiveModel] = useState<string>()
   const [inputValue, setInputValue] = useState("")
-  const [messages, setMessages] = useState<Message[]>([])
+  const [conversations, setConversations] = useState<Conversation[]>(() => {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as Conversation[]
+        if (Array.isArray(parsed)) return parsed
+      }
+    } catch {
+      // Historique corrompu ou stockage indisponible : on repart de zéro
+    }
+    return []
+  })
+  const [activeId, setActiveId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(ACTIVE_KEY)
+    } catch {
+      return null
+    }
+  })
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
   const [isThinking, setIsThinking] = useState(false)
@@ -93,10 +130,32 @@ function App() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Conversation active (ou aucune) — les messages affichés en dérivent
+  const activeConv = conversations.find(c => c.id === activeId) ?? null
+  const messages = useMemo(() => activeConv?.messages ?? [], [activeConv])
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
     localStorage.setItem('neural-port-theme', isDark ? 'dark' : 'light')
   }, [isDark])
+
+  // Persistance de l'historique et de la conversation active
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversations))
+    } catch {
+      // Stockage plein ou bloqué : l'historique ne sera simplement pas conservé
+    }
+  }, [conversations])
+
+  useEffect(() => {
+    try {
+      if (activeId) localStorage.setItem(ACTIVE_KEY, activeId)
+      else localStorage.removeItem(ACTIVE_KEY)
+    } catch {
+      // ignore
+    }
+  }, [activeId])
 
   useEffect(() => {
     if (!isAtBottom) return
@@ -152,15 +211,57 @@ function App() {
     }
   }
 
+  function updateConversation(id: string, fn: (c: Conversation) => Conversation) {
+    setConversations(prev => prev.map(c => (c.id === id ? { ...fn(c), updatedAt: Date.now() } : c)))
+  }
+
+  function updateMessages(convId: string, fn: (msgs: Message[]) => Message[]) {
+    updateConversation(convId, c => ({ ...c, messages: fn(c.messages) }))
+  }
+
+  function newConversation() {
+    if (isLoading || isStreaming) return
+    setActiveId(null)
+    setSidebarOpen(false)
+  }
+
+  function openConversation(id: string) {
+    if (isLoading || isStreaming) return
+    setActiveId(id)
+    setIsAtBottom(true)
+    setSidebarOpen(false)
+  }
+
+  function deleteConversation(id: string) {
+    if (!window.confirm("Supprimer cette conversation ?")) return
+    setConversations(prev => prev.filter(c => c.id !== id))
+    if (activeId === id) setActiveId(null)
+  }
+
   async function sendMessage() {
     if (!inputValue.trim() || isLoading || isStreaming) return
 
     const userMessage: Message = { role: "user", content: inputValue }
-    const updatedMessages = [...messages, userMessage]
+
+    // Soit on rattachera le message à la conversation en cours, soit on en crée une
+    let convId = activeConv ? activeConv.id : null
+    if (!convId) {
+      convId = makeId()
+      const text = inputValue.trim().replace(/\s+/g, " ")
+      const title = text.length > 50 ? text.slice(0, 50).trimEnd() + "…" : text
+      const now = Date.now()
+      const id = convId
+      setConversations(prev => [
+        { id, title, model: activeModel, messages: [userMessage], createdAt: now, updatedAt: now },
+        ...prev
+      ])
+      setActiveId(id)
+    } else {
+      updateMessages(convId, msgs => [...msgs, userMessage])
+    }
 
     setInputValue("")
     setIsAtBottom(true)
-    setMessages(updatedMessages)
 
     const modelAlreadyLoaded = await checkModelLoaded(activeModel!)
     setLoadingMessage(modelAlreadyLoaded ? "Traitement du contexte…" : "Chargement du modèle…")
@@ -186,7 +287,8 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: activeModel,
-          messages: updatedMessages,
+          // On n'envoie que role/content à Ollama (stats exclues)
+          messages: [...(activeConv?.messages ?? []), userMessage].map(m => ({ role: m.role, content: m.content })),
           stream: true
         })
       })
@@ -213,6 +315,7 @@ function App() {
         for (const line of lines) {
           try {
             const chunk = JSON.parse(line) as { message?: { content: string; thinking?: string } }
+
             const hasThinking = !!chunk.message?.thinking
             const hasContent = !!chunk.message?.content
 
@@ -262,10 +365,10 @@ function App() {
 
               if (displayContent.length > 0) {
                 if (!hasAssistantMsgRef.current) {
-                  setMessages(prev => [...prev, { role: "assistant", content: displayContent }])
+                  updateMessages(convId, prev => [...prev, { role: "assistant", content: displayContent }])
                   hasAssistantMsgRef.current = true
                 } else {
-                  setMessages(prev => {
+                  updateMessages(convId, prev => {
                     const updated = [...prev]
                     updated[updated.length - 1] = { ...updated[updated.length - 1], content: displayContent }
                     return updated
@@ -295,12 +398,32 @@ function App() {
   const canSend = !!activeModel && !isLoading && !isStreaming
 
   return (
-    <div className="h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+    <div className="h-screen flex bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 overflow-hidden">
+
+      <Sidebar
+        conversations={[...conversations].sort((a, b) => b.updatedAt - a.updatedAt)}
+        activeId={activeConv ? activeConv.id : null}
+        open={sidebarOpen}
+        onSelect={openConversation}
+        onNew={newConversation}
+        onDelete={deleteConversation}
+        onClose={() => setSidebarOpen(false)}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0">
 
       <header className="shrink-0 flex items-center justify-between px-6 h-14 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/90 dark:bg-zinc-950/90 backdrop-blur-md z-10">
-        <span className="font-sans text-sm font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
-          Neural-Port
-        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
+          >
+            <MenuIcon />
+          </button>
+          <span className="font-sans text-sm font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
+            Neural-Port
+          </span>
+        </div>
         <button
           onClick={() => setIsDark(!isDark)}
           className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-100 transition-colors cursor-pointer"
@@ -336,6 +459,16 @@ function App() {
                     {isLoading ? loadingMessage : "Réflexion en cours…"}
                   </span>
                 </div>
+              </div>
+            )}
+            {messages.length === 0 && !isLoading && !isThinking && (
+              <div className="flex-1 flex flex-col items-center justify-center text-center gap-2 py-16">
+                <span className="font-sans text-base font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
+                  Neural-Port
+                </span>
+                <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                  {activeModel ? "Posez votre première question…" : "Sélectionnez un modèle pour commencer"}
+                </p>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -400,6 +533,8 @@ function App() {
             </button>
           </div>
         </div>
+      </div>
+
       </div>
 
     </div>

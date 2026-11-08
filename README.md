@@ -6,6 +6,10 @@ L'idée est simple : profiter d'une interface soignée sans sacrifier la confide
 
 ## Fonctionnalités
 
+**Historique des conversations**
+
+Comme ChatGPT ou Claude, toutes vos conversations sont conservées dans une barre latérale. Chaque conversation est nommée automatiquement d'après votre premier message et mémorisée dans le navigateur : fermez la page, rouvrez-la, tout est là. Créez-en de nouvelles en un clic, revenez sur une ancienne, supprimez celles qui ne servent plus.
+
 **Statut de génération en temps réel**
 
 Quand vous patientez après avoir envoyé un message, l'interface vous indique précisément ce qui se passe. Si le modèle n'était pas en mémoire, vous voyez qu'il charge, puis qu'il traite votre contexte une fois prêt. Pour les modèles de raisonnement comme DeepSeek-R1 ou QwQ, une étape "Réflexion en cours" s'affiche pendant la phase de pensée, détectée directement dans le flux de l'API Ollama.
