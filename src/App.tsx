@@ -101,7 +101,15 @@ function App() {
   useEffect(() => {
     if (!isAtBottom) return
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" })
-  }, [messages, isAtBottom])
+  }, [messages, isAtBottom, isLoading, isThinking])
+
+  // Renvoie le curseur dans l'input dès qu'il est utilisable :
+  // à l'arrivée sur la page, au choix d'un modèle, et à la fin de chaque réponse
+  useEffect(() => {
+    if (!isLoading && !isStreaming && activeModel) {
+      textareaRef.current?.focus()
+    }
+  }, [isLoading, isStreaming, activeModel])
 
   useEffect(() => {
     async function fetchModels() {
@@ -118,8 +126,11 @@ function App() {
   }, [])
 
   function handleWheel(event: React.WheelEvent) {
+    const container = scrollContainerRef.current
     if (event.deltaY < 0) {
       setIsAtBottom(false)
+    } else if (container && container.scrollHeight - container.scrollTop - container.clientHeight < 30) {
+      setIsAtBottom(true)
     }
   }
 
