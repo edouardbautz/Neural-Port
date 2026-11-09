@@ -1,8 +1,8 @@
 import { useState } from "react"
+import { Children, isValidElement, type ReactNode } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
-import "highlight.js/styles/github-dark.css"
 import type { Message } from "../App"
 import { CheckIcon } from "./icons"
 
@@ -20,6 +20,59 @@ function CopyIcon() {
       <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
+  )
+}
+
+// Récupère le texte brut d'un nœud React (utilisé pour copier le code)
+function extractCodeText(node: ReactNode): string {
+  if (typeof node === "string") return node
+  if (Array.isArray(node)) return node.map(extractCodeText).join("")
+  if (isValidElement(node)) {
+    return extractCodeText((node.props as { children?: ReactNode }).children)
+  }
+  return ""
+}
+
+// Détecte la langue sur <code class="hljs language-xxx"> (enfants de <pre>)
+function detectLanguage(children: ReactNode): string | null {
+  for (const child of Children.toArray(children)) {
+    if (isValidElement(child)) {
+      const cls = (child.props as { className?: string }).className ?? ""
+      const match = /language-([\w-]+)/.exec(cls)
+      if (match) return match[1]
+    }
+  }
+  return null
+}
+
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false)
+  const lang = detectLanguage(children)
+
+  function handleCopy() {
+    navigator.clipboard.writeText(extractCodeText(children))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="not-prose my-4 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-xs">
+      <div className="flex items-center justify-between gap-3 px-3.5 py-1.5 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-800">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500 select-none">
+          {lang ?? "code"}
+        </span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+        >
+          {copied ? <CheckIcon /> : <CopyIcon />}
+          {copied ? "Copié" : "Copier"}
+        </button>
+      </div>
+      <pre className="overflow-x-auto p-3.5 text-[13px] leading-relaxed">
+        {children}
+      </pre>
+    </div>
   )
 }
 
@@ -59,19 +112,22 @@ function Msg({ role, content, tps, duration, tokens, isStreaming = false }: MsgP
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
         )}
-        <div className="prose prose-sm prose-zinc dark:prose-invert max-w-none">
+        <div className="prose prose-sm prose-zinc dark:prose-invert max-w-none np-prose">
           <Markdown
             remarkPlugins={[remarkGfm]}
             rehypePlugins={[[rehypeHighlight, { detect: true }]]}
             components={{
+              a: ({ children, href }) => (
+                <a href={href} target="_blank" rel="noopener noreferrer">
+                  {children}
+                </a>
+              ),
               table: ({ children }) => (
-                <div className="overflow-x-auto">
+                <div className="not-prose my-4 overflow-x-auto">
                   <table>{children}</table>
                 </div>
               ),
-              pre: ({ children }) => (
-                <pre className="overflow-x-auto">{children}</pre>
-              ),
+              pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
             }}
           >
             {isStreaming && content.length > 0 ? content + " ▋" : content}

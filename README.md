@@ -18,9 +18,9 @@ Quand vous patientez après avoir envoyé un message, l'interface vous indique p
 
 Tous vos modèles installés dans Ollama apparaissent dans le menu de sélection. Ajoutez-en un nouveau pendant que l'application tourne, il sera disponible au prochain clic.
 
-**Rendu Markdown avec coloration syntaxique**
+**Rendu Markdown soigné**
 
-Les réponses sont affichées en Markdown. Les blocs de code sont surlignés automatiquement selon le langage détecté.
+Les réponses sont affichées en Markdown : tableaux stylés, citations, listes, liens, code inline et blocs de code avec en-tête (langue détectée), bouton de copie et coloration syntaxique qui s'adapte au thème clair ou sombre. Un bouton de copie est également disponible sur chaque bulle de réponse.
 
 **Streaming et mode sombre**
 
