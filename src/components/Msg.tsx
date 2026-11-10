@@ -107,10 +107,10 @@ function Msg({ role, content, thinking, tps, duration, tokens, files, onSaveCode
   const [draft, setDraft] = useState(content)
 
   // Statistiques réelles fournies par Ollama (null si l'API ne les renvoie pas)
-  const stats: string[] = []
-  if (tokens != null) stats.push(`${formatNumber(tokens)} tokens`)
-  if (duration != null) stats.push(`${formatNumber(duration)} s`)
-  if (tps != null) stats.push(`${formatNumber(tps)} tokens/s`)
+  const stats: { text: string; hint: string }[] = []
+  if (tokens != null) stats.push({ text: `${formatNumber(tokens)} tokens`, hint: "Tokens générés par le modèle, réflexion comprise : peut dépasser la longueur du texte affiché" })
+  if (duration != null) stats.push({ text: `${formatNumber(duration)} s`, hint: "Durée de génération seule, sans le chargement du modèle ni la lecture de ta question" })
+  if (tps != null) stats.push({ text: `${formatNumber(tps)} tokens/s`, hint: "Vitesse de génération : tokens générés ÷ durée de génération" })
 
   function handleCopy() {
     navigator.clipboard.writeText(content)
@@ -229,9 +229,9 @@ function Msg({ role, content, thinking, tps, duration, tokens, files, onSaveCode
       {!isStreaming && (stats.length > 0 || onRegenerate) && (
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 tabular-nums">
           {stats.map((s, i) => (
-            <span key={i} className="flex items-center gap-x-1.5">
+            <span key={i} title={s.hint} className="flex items-center gap-x-1.5">
               {i > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
-              {s}
+              {s.text}
             </span>
           ))}
           {onRegenerate && (
