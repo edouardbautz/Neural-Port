@@ -4,10 +4,13 @@ import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import type { Message } from "../App"
+import { downloadFile } from "../lib/files"
+import { repairFences } from "../lib/markdown"
 import { CheckIcon } from "./icons"
 
 interface MsgProps extends Message {
   isStreaming?: boolean
+  onSaveCode?: (code: string, lang: string | null) => void
 }
 
 function formatNumber(n: number) {
@@ -45,8 +48,9 @@ function detectLanguage(children: ReactNode): string | null {
   return null
 }
 
-function CodeBlock({ children }: { children?: ReactNode }) {
+function CodeBlock({ children, onSave }: { children?: ReactNode; onSave?: (code: string, lang: string | null) => void }) {
   const [copied, setCopied] = useState(false)
+  const [saved, setSaved] = useState(false)
   const lang = detectLanguage(children)
 
   function handleCopy() {
@@ -55,19 +59,38 @@ function CodeBlock({ children }: { children?: ReactNode }) {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  function handleSave() {
+    onSave?.(extractCodeText(children), lang)
+    setSaved(true)
+  }
+
+  // Bloc vide (fence parasite d'un petit modèle) : on n'affiche pas de cadre avec des boutons pour rien
+  if (extractCodeText(children).trim() === "") return null
+
   return (
     <div className="not-prose my-4 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-xs">
       <div className="flex items-center justify-between gap-3 px-3.5 py-1.5 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-800">
         <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500 select-none">
           {lang ?? "code"}
         </span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
-        >
-          {copied ? <CheckIcon /> : <CopyIcon />}
-          {copied ? "Copié" : "Copier"}
-        </button>
+        <div className="flex items-center gap-3">
+          {onSave && (
+            <button
+              onClick={handleSave}
+              disabled={saved}
+              className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer disabled:cursor-default disabled:hover:text-zinc-400"
+            >
+              {saved ? "Fichier créé" : "Créer un fichier"}
+            </button>
+          )}
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+          >
+            {copied ? <CheckIcon /> : <CopyIcon />}
+            {copied ? "Copié" : "Copier"}
+          </button>
+        </div>
       </div>
       <pre className="overflow-x-auto p-3.5 text-[13px] leading-relaxed">
         {children}
@@ -76,7 +99,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   )
 }
 
-function Msg({ role, content, tps, duration, tokens, isStreaming = false }: MsgProps) {
+function Msg({ role, content, tps, duration, tokens, files, onSaveCode, isStreaming = false }: MsgProps) {
   const [copied, setCopied] = useState(false)
 
   // Statistiques réelles fournies par Ollama (null si l'API ne les renvoie pas)
@@ -103,6 +126,7 @@ function Msg({ role, content, tps, duration, tokens, isStreaming = false }: MsgP
 
   return (
     <div className="flex flex-col items-start gap-1.5 msg-in group/msg">
+      {content.length > 0 || isStreaming ? (
       <div className={`relative max-w-[80%] px-4 py-3 rounded-2xl rounded-tl-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm transition-shadow${isStreaming ? " streaming-bubble" : ""}`}>
         {!isStreaming && (
           <button
@@ -127,13 +151,30 @@ function Msg({ role, content, tps, duration, tokens, isStreaming = false }: MsgP
                   <table>{children}</table>
                 </div>
               ),
-              pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+              pre: ({ children }) => <CodeBlock onSave={onSaveCode}>{children}</CodeBlock>,
             }}
           >
-            {isStreaming && content.length > 0 ? content + " ▋" : content}
+            {isStreaming && content.length > 0 ? repairFences(content) + " ▋" : repairFences(content)}
           </Markdown>
         </div>
       </div>
+      ) : null}
+      {files && files.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {files.map(f => (
+            <button
+              key={f.id}
+              onClick={() => downloadFile(f)}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs font-medium hover:border-indigo-400 dark:hover:border-indigo-500 transition-colors cursor-pointer"
+              title="Télécharger"
+            >
+              <span aria-hidden>📄</span>
+              {f.name}
+              <span className="text-zinc-400 dark:text-zinc-500">↓</span>
+            </button>
+          ))}
+        </div>
+      )}
       {!isStreaming && stats.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-1.5 px-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 tabular-nums">
           {stats.map((s, i) => (
