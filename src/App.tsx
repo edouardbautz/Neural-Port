@@ -129,6 +129,14 @@ function MoonIcon() {
   )
 }
 
+function StopIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="5" y="5" width="14" height="14" rx="2.5" />
+    </svg>
+  )
+}
+
 function SendIcon() {
   return (
     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -192,6 +200,7 @@ function App() {
   const [loadingMessage, setLoadingMessage] = useState("")
   const rawBufferRef = useRef("")
   const hasAssistantMsgRef = useRef(false)
+  const abortRef = useRef<AbortController | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isThinkingRef = useRef(false)
   const thinkOpenIdxRef = useRef(-1)
@@ -256,6 +265,15 @@ function App() {
     })
     return () => { cancelled = true }
   }, [activeModel])
+
+  // Échap arrête la génération en cours
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") abortRef.current?.abort()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
 
   // Renvoie le curseur dans l'input dès qu'il est utilisable :
   // à l'arrivée sur la page, au choix d'un modèle, et à la fin de chaque réponse
@@ -342,6 +360,11 @@ function App() {
     })
   }
 
+  // Interrompt la génération en cours : le texte déjà écrit est conservé
+  function stopGeneration() {
+    abortRef.current?.abort()
+  }
+
   function newConversation() {
     if (isLoading || isStreaming) return
     setActiveId(null)
@@ -404,6 +427,9 @@ function App() {
       textareaRef.current.style.height = 'auto'
     }
 
+    const controller = new AbortController()
+    abortRef.current = controller
+
     // Nom de fichier cité par l'utilisateur (« crée jeu.py ») : il prime sur celui choisi par le modèle
     const requestedName = filenameFromRequest(userMessage.content)
     let failure: string | null = null  // erreur renvoyée par Ollama pendant le flux
@@ -443,7 +469,8 @@ function App() {
             options: { num_ctx: Math.min(numCtx, ctxSteps(maxCtx).at(-1)!) },
             ...(attempt > 0 ? { think: false } : {}),
             stream: true
-          })
+          }),
+          signal: controller.signal
         })
 
         if (!response.body) throw new Error("Réponse vide du serveur")
@@ -585,8 +612,11 @@ function App() {
           }
         }
 
-        if (hasAssistantMsgRef.current) break
+        if (hasAssistantMsgRef.current || controller.signal.aborted) break
       }
+
+      // Arrêt demandé par l'utilisateur : on garde ce qui est déjà écrit, sans message d'erreur ni rattrapage
+      if (controller.signal.aborted) return
 
       // Filets de sécurité : quelle que soit la capacité du modèle, l'utilisateur n'est jamais laissé sans résultat
       if (failure) {
@@ -623,10 +653,12 @@ function App() {
         return c
       })
     } catch (error) {
+      if (controller.signal.aborted) return
       console.error("Erreur lors de l'envoi du message:", error)
       const detail = error instanceof Error && error.message ? ` (${error.message})` : ""
       addNotice(convId, `La connexion avec Ollama a été interrompue${detail}. Vérifie qu'Ollama tourne et que le modèle tient en mémoire (essaie une fenêtre de contexte plus petite), puis réessaie.`)
     } finally {
+      abortRef.current = null
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
         pollingRef.current = null
@@ -638,7 +670,8 @@ function App() {
     }
   }
 
-  const canSend = !!activeModel && !isLoading && !isStreaming
+  const busy = isLoading || isStreaming
+  const canSend = !!activeModel && !busy
 
   return (
     <div className="h-screen flex bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 overflow-hidden">
@@ -777,17 +810,28 @@ function App() {
                 />
               )}
             </div>
-            <button
-              onClick={sendMessage}
-              disabled={!canSend}
-              className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
-                canSend
-                  ? 'bg-indigo-500 hover:bg-indigo-600 text-white cursor-pointer shadow-sm'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed'
-              }`}
-            >
-              <SendIcon />
-            </button>
+            {busy ? (
+              <button
+                onClick={stopGeneration}
+                aria-label="Arrêter la génération"
+                title="Arrêter (Échap)"
+                className="w-8 h-8 rounded-xl flex items-center justify-center bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:opacity-80 cursor-pointer shadow-sm transition-all"
+              >
+                <StopIcon />
+              </button>
+            ) : (
+              <button
+                onClick={sendMessage}
+                disabled={!canSend}
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
+                  canSend
+                    ? 'bg-indigo-500 hover:bg-indigo-600 text-white cursor-pointer shadow-sm'
+                    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed'
+                }`}
+              >
+                <SendIcon />
+              </button>
+            )}
           </div>
         </div>
       </div>
