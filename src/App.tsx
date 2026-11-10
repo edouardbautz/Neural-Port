@@ -4,7 +4,7 @@ import Msg from './components/Msg'
 import Sidebar from './components/Sidebar'
 import FilesPanel from './components/FilesPanel'
 import SettingsPanel from './components/SettingsPanel'
-import { ctxSteps } from './lib/context'
+import { ctxSteps, isThinkLevel, THINK_LEVELS, type ThinkLevel } from './lib/context'
 import { repairFences } from './lib/markdown'
 import { extensionFor, extractCodeBlocks, filenameFromRequest, makeFile, type GeneratedFile } from './lib/files'
 import { MenuIcon, SlidersIcon } from './components/icons'
@@ -67,9 +67,6 @@ const SUGGESTIONS = [
   "Aide-moi à corriger mon code"
 ]
 
-// Au-delà de ce volume de réflexion (~1 500 tokens) sans début de réponse, on abandonne la réflexion et on relance sans
-const THINK_BUDGET_CHARS = 6000
-
 const FILE_REQUEST = /fichier|file\b|télécharg|telecharg|download|exporte|\.[a-z]{1,5}\b/i
 
 const SYSTEM_PROMPT =
@@ -93,7 +90,7 @@ const CREATE_FILE_TOOL = {
 }
 
 // Capacités du modèle (Ollama refuse `tools` s'il ne le gère pas) et sa fenêtre de contexte maximale
-interface ModelInfo { tools: boolean; thinking: boolean; maxCtx: number | null }
+interface ModelInfo { tools: boolean; thinking: boolean; thinkLevels: boolean; maxCtx: number | null }
 const modelInfoCache = new Map<string, ModelInfo>()
 async function getModelInfo(model: string): Promise<ModelInfo> {
   const cached = modelInfoCache.get(model)
@@ -104,18 +101,20 @@ async function getModelInfo(model: string): Promise<ModelInfo> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model })
     })
-    const data = (await res.json()) as { capabilities?: string[]; model_info?: Record<string, unknown> }
+    const data = (await res.json()) as { capabilities?: string[]; model_info?: Record<string, unknown>; details?: { family?: string } }
     const key = Object.keys(data.model_info ?? {}).find(k => k.endsWith(".context_length"))
     const max = key ? data.model_info![key] : null
     const info: ModelInfo = {
       tools: data.capabilities?.includes("tools") ?? false,
       thinking: data.capabilities?.includes("thinking") ?? false,
+      // Seule la famille GPT-OSS honore les niveaux low/medium/high ; les autres n'ont qu'un on/off
+      thinkLevels: /gpt-?oss/i.test(`${model} ${data.details?.family ?? ""}`),
       maxCtx: typeof max === "number" ? max : null
     }
     modelInfoCache.set(model, info)
     return info
   } catch {
-    return { tools: false, thinking: false, maxCtx: null }
+    return { tools: false, thinking: false, thinkLevels: false, maxCtx: null }
   }
 }
 
@@ -186,13 +185,17 @@ function App() {
     return DEFAULT_CTX
   })
   const [maxCtx, setMaxCtx] = useState<number | null>(null)
-  const [thinkEnabled, setThinkEnabled] = useState<boolean>(() => {
+  // Anciennes valeurs enregistrées : « auto » devient « medium »
+  const [thinkLevel, setThinkLevel] = useState<ThinkLevel>(() => {
     try {
-      return localStorage.getItem(THINK_KEY) !== "off"
+      const saved = localStorage.getItem(THINK_KEY)
+      if (isThinkLevel(saved)) return saved
     } catch {
-      return true
+      // ignore
     }
+    return "medium"
   })
+  const [thinkSupport, setThinkSupport] = useState<"none" | "toggle" | "levels">("toggle")
   const [liveThinking, setLiveThinking] = useState("")
   const thinkBufferRef = useRef("")
   const [activeModel, setActiveModel] = useState<string | undefined>(() => {
@@ -280,11 +283,11 @@ function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(THINK_KEY, thinkEnabled ? "auto" : "off")
+      localStorage.setItem(THINK_KEY, thinkLevel)
     } catch {
       // ignore
     }
-  }, [thinkEnabled])
+  }, [thinkLevel])
 
   useEffect(() => {
     try {
@@ -346,7 +349,9 @@ function App() {
     if (!activeModel) return
     let cancelled = false
     getModelInfo(activeModel).then(info => {
-      if (!cancelled) setMaxCtx(info.maxCtx)
+      if (cancelled) return
+      setMaxCtx(info.maxCtx)
+      setThinkSupport(!info.thinking ? "none" : info.thinkLevels ? "levels" : "toggle")
     })
     return () => { cancelled = true }
   }, [activeModel])
@@ -604,7 +609,9 @@ function App() {
         const attemptCtl = new AbortController()
         const onUserAbort = () => attemptCtl.abort()
         controller.signal.addEventListener("abort", onUserAbort)
-        const canOverthink = attempt === 0 && info.thinking && thinkEnabled
+        // Pour les modèles sans niveaux natifs, on limite nous-mêmes la durée de réflexion selon le niveau choisi
+        const budget = THINK_LEVELS.find(l => l.id === thinkLevel)!.budgetChars
+        const canOverthink = attempt === 0 && info.thinking && !info.thinkLevels && thinkLevel !== "off" && budget !== null
         let overthought = false
 
         try {
@@ -617,7 +624,13 @@ function App() {
               ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
               options: { num_ctx: effectiveCtx },
               // `think` n'est accepté que par les modèles qui savent raisonner
-              ...(info.thinking && (attempt > 0 || !thinkEnabled) ? { think: false } : {}),
+              ...(info.thinking
+                ? attempt > 0 || thinkLevel === "off"
+                  ? { think: false }
+                  : info.thinkLevels
+                    ? { think: thinkLevel }
+                    : {}
+                : {}),
               stream: true
             }),
             signal: attemptCtl.signal
@@ -713,7 +726,7 @@ function App() {
                   thinkBufferRef.current += chunk.message!.thinking
                   setLiveThinking(thinkBufferRef.current)
                   // Un petit modèle peut réfléchir pendant des minutes sur une question simple : on coupe et on relance sans réflexion
-                  if (canOverthink && !rawBufferRef.current && thinkBufferRef.current.length > THINK_BUDGET_CHARS) {
+                  if (canOverthink && !rawBufferRef.current && thinkBufferRef.current.length > budget!) {
                     overthought = true
                     attemptCtl.abort()
                   }
@@ -1053,8 +1066,9 @@ function App() {
           maxCtx={maxCtx}
           used={[...messages].reverse().find(m => m.ctxUsed != null)?.ctxUsed ?? null}
           onChange={setNumCtx}
-          thinkEnabled={thinkEnabled}
-          onThinkChange={setThinkEnabled}
+          thinkLevel={thinkLevel}
+          thinkSupport={thinkSupport}
+          onThinkChange={setThinkLevel}
           onClose={() => setSettingsOpen(false)}
         />
       )}
