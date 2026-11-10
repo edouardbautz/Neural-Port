@@ -19,6 +19,7 @@ export interface Message {
   tokens?: number    // nombre de tokens générés (valeur réelle)
   notice?: boolean   // message d'information de l'appli (erreur…), non envoyé au modèle
   thinking?: string  // réflexion du modèle (affichée dans un bloc repliable)
+  approx?: boolean   // les statistiques incluent une estimation (réflexion interrompue puis relancée)
   ctxUsed?: number   // tokens de contexte utilisés (prompt + génération), renvoyés par Ollama
   files?: GeneratedFile[]  // fichiers créés par l'IA (outil create_file) ou depuis un bloc de code
 }
@@ -577,6 +578,10 @@ function App() {
     // Nom de fichier cité par l'utilisateur (« crée jeu.py ») : il prime sur celui choisi par le modèle
     const requestedName = filenameFromRequest(userMessage.content)
     let failure: string | null = null  // erreur renvoyée par Ollama pendant le flux
+    // Réflexion d'une tentative interrompue : Ollama ne renvoie pas de statistiques pour un flux coupé,
+    // on l'estime (~4 caractères par token) pour que les totaux affichés comptent bien toute la réflexion
+    let carriedTokens = 0
+    let carriedSec = 0
 
     try {
       // L'outil n'est proposé que si le message parle explicitement d'un fichier : un petit modèle
@@ -613,6 +618,7 @@ function App() {
         const budget = THINK_LEVELS.find(l => l.id === thinkLevel)!.budgetChars
         const canOverthink = attempt === 0 && info.thinking && !info.thinkLevels && thinkLevel !== "off" && budget !== null
         let overthought = false
+        let firstTokenAt: number | null = null  // début de la génération (exclut chargement et lecture de la question)
 
         try {
           const response = await fetch(`${OLLAMA_URL}/api/chat`, {
@@ -681,15 +687,15 @@ function App() {
                 if (chunk.done) {
                   // Valeurs réelles renvoyées par Ollama à la fin du stream.
                   // On ne les garde que si elles sont présentes : jamais inventées.
-                  const tokens = chunk.eval_count
-                const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
-                  const sec = (chunk.eval_duration ?? 0) / 1e9
+                  const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
+                  const tokens = chunk.eval_count ? chunk.eval_count + carriedTokens : undefined
+                  const sec = (chunk.eval_duration ?? 0) / 1e9 + carriedSec
                   if (tokens && tokens > 0 && sec > 0) {
                     updateMessages(convId, prev => {
                       const last = prev[prev.length - 1]
                       if (!last || last.role !== "assistant") return prev
                       const arr = [...prev]
-                      arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens, ctxUsed }
+                      arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens, ctxUsed, approx: carriedTokens > 0 }
                       return arr
                     })
                   }
@@ -704,6 +710,7 @@ function App() {
                 if (firstChunk) {
                   setIsLoading(false)
                   firstChunk = false
+                  firstTokenAt = Date.now()
                 }
 
                 // Appels de l'outil create_file : on ignore tout ce qui est mal formé
@@ -790,6 +797,8 @@ function App() {
         } catch (error) {
           if (!overthought) throw error
           retryMessage = "Réflexion trop longue, je réponds directement…"
+          carriedTokens += Math.round(thinkBufferRef.current.length / 4)
+          if (firstTokenAt !== null) carriedSec += (Date.now() - firstTokenAt) / 1000
         } finally {
           controller.signal.removeEventListener("abort", onUserAbort)
         }
@@ -920,6 +929,7 @@ function App() {
                 tps={msg.tps}
                 duration={msg.duration}
                 tokens={msg.tokens}
+                approx={msg.approx}
                 files={msg.files}
                 onSaveCode={(code, lang) => saveCodeAsFile(index, code, lang)}
                 onEdit={msg.role === "user" && !busy ? (content: string) => editMessage(index, content) : undefined}

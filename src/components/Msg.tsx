@@ -101,16 +101,19 @@ function CodeBlock({ children, onSave }: { children?: ReactNode; onSave?: (code:
   )
 }
 
-function Msg({ role, content, thinking, tps, duration, tokens, files, onSaveCode, onEdit, onRegenerate, isStreaming = false }: MsgProps) {
+function Msg({ role, content, thinking, approx, tps, duration, tokens, files, onSaveCode, onEdit, onRegenerate, isStreaming = false }: MsgProps) {
   const [copied, setCopied] = useState(false)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(content)
 
   // Statistiques réelles fournies par Ollama (null si l'API ne les renvoie pas)
+  // Le préfixe « ≈ » signale une part estimée : réflexion d'une première tentative interrompue (Ollama ne la comptabilise pas)
+  const approxNote = approx ? " Une réflexion interrompue puis relancée est comptée par estimation (≈)." : ""
+  const pre = approx ? "≈ " : ""
   const stats: { text: string; hint: string }[] = []
-  if (tokens != null) stats.push({ text: `${formatNumber(tokens)} tokens`, hint: "Tokens générés par le modèle, réflexion comprise : peut dépasser la longueur du texte affiché" })
-  if (duration != null) stats.push({ text: `${formatNumber(duration)} s`, hint: "Durée de génération seule, sans le chargement du modèle ni la lecture de ta question" })
-  if (tps != null) stats.push({ text: `${formatNumber(tps)} tokens/s`, hint: "Vitesse de génération : tokens générés ÷ durée de génération" })
+  if (tokens != null) stats.push({ text: `${pre}${formatNumber(tokens)} tokens`, hint: `Tokens générés par le modèle, réflexion comprise : peut dépasser la longueur du texte affiché.${approxNote}` })
+  if (duration != null) stats.push({ text: `${pre}${formatNumber(duration)} s`, hint: `Durée de génération (réflexion comprise), sans le chargement du modèle ni la lecture de ta question.${approxNote}` })
+  if (tps != null) stats.push({ text: `${pre}${formatNumber(tps)} tokens/s`, hint: `Vitesse de génération : tokens générés ÷ durée de génération.${approxNote}` })
 
   function handleCopy() {
     navigator.clipboard.writeText(content)
