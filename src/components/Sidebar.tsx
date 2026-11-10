@@ -1,10 +1,12 @@
-import { PlusIcon, TrashIcon, XIcon } from "./icons"
+import { useState } from "react"
+import { PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons"
 
 export interface ConversationMeta {
   id: string
   title: string
   model?: string
   updatedAt: number
+  messages?: { content: string }[]  // utilisé pour la recherche
 }
 
 interface SidebarProps {
@@ -14,6 +16,7 @@ interface SidebarProps {
   onSelect: (id: string) => void
   onNew: () => void
   onDelete: (id: string) => void
+  onRename: (id: string, title: string) => void
   onClose: () => void
 }
 
@@ -27,7 +30,21 @@ function formatRelative(ts: number): string {
   return d.toLocaleDateString("fr-FR", opts)
 }
 
-function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onClose }: SidebarProps) {
+function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onRename, onClose }: SidebarProps) {
+  const [query, setQuery] = useState("")
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState("")
+
+  const q = query.trim().toLowerCase()
+  const visible = q
+    ? conversations.filter(c => c.title.toLowerCase().includes(q) || c.messages?.some(m => m.content.toLowerCase().includes(q)))
+    : conversations
+
+  function commitRename(id: string) {
+    setRenamingId(null)
+    if (draft.trim()) onRename(id, draft.trim())
+  }
+
   return (
     <>
       {/* Voile de fond sur mobile (sidebar en overlay) */}
@@ -52,6 +69,19 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onC
           </button>
         </div>
 
+        {conversations.length > 0 && (
+          <div className="shrink-0 px-3 pb-2">
+            <input
+              type="search"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Rechercher…"
+              aria-label="Rechercher dans les conversations"
+              className="w-full px-3 py-1.5 rounded-lg text-sm bg-zinc-100 dark:bg-zinc-800 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {conversations.length === 0 ? (
             <div className="px-3 py-8 text-center">
@@ -61,15 +91,32 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onC
                 Vos échanges apparaîtront ici.
               </p>
             </div>
+          ) : visible.length === 0 ? (
+            <p className="px-3 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">Aucun résultat pour « {query} »</p>
           ) : (
             <ul className="space-y-0.5">
-              {conversations.map((c) => {
+              {visible.map((c) => {
                 const isActive = c.id === activeId
                 return (
                   <li key={c.id} className="group relative">
+                    {renamingId === c.id ? (
+                      <input
+                        autoFocus
+                        value={draft}
+                        onChange={e => setDraft(e.target.value)}
+                        onBlur={() => commitRename(c.id)}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") commitRename(c.id)
+                          if (e.key === "Escape") { e.stopPropagation(); setRenamingId(null) }
+                        }}
+                        maxLength={80}
+                        className="w-full px-3 py-2 rounded-lg text-sm bg-zinc-100 dark:bg-zinc-800 outline-none ring-1 ring-indigo-400"
+                      />
+                    ) : (
                     <button
                       onClick={() => onSelect(c.id)}
-                      className={`w-full text-left px-3 py-2 pr-9 rounded-lg transition-colors ${
+                      onDoubleClick={() => { setDraft(c.title); setRenamingId(c.id) }}
+                      className={`w-full text-left px-3 py-2 pr-16 rounded-lg transition-colors ${
                         isActive
                           ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
                           : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100/70 dark:hover:bg-zinc-800/60 hover:text-zinc-900 dark:hover:text-zinc-100"
@@ -80,6 +127,17 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onC
                         {[c.model, formatRelative(c.updatedAt)].filter(Boolean).join(" · ")}
                       </span>
                     </button>
+                    )}
+                    {renamingId !== c.id && (
+                    <button
+                      onClick={() => { setDraft(c.title); setRenamingId(c.id) }}
+                      title="Renommer"
+                      aria-label="Renommer la conversation"
+                      className="absolute right-9 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
+                    >
+                      <PencilIcon />
+                    </button>
+                    )}
                     <button
                       onClick={() => onDelete(c.id)}
                       title="Supprimer"

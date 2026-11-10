@@ -60,6 +60,13 @@ async function checkModelLoaded(model: string): Promise<boolean> {
   }
 }
 
+const SUGGESTIONS = [
+  "Explique-moi un concept simplement",
+  "Écris un script Python dans un fichier",
+  "Résume ce texte en trois phrases",
+  "Aide-moi à corriger mon code"
+]
+
 const FILE_REQUEST = /fichier|file\b|télécharg|telecharg|download|exporte|\.[a-z]{1,5}\b/i
 
 const SYSTEM_PROMPT =
@@ -341,10 +348,22 @@ function App() {
     return () => { cancelled = true }
   }, [activeModel])
 
-  // Échap arrête la génération en cours
+  // Raccourcis clavier : Échap arrête la génération, Ctrl+K nouvelle conversation, Ctrl+, paramètres
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") abortRef.current?.abort()
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault()
+        if (!abortRef.current) {
+          setActiveId(null)
+          setSidebarOpen(false)
+          textareaRef.current?.focus()
+        }
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+        event.preventDefault()
+        setSettingsOpen(open => !open)
+      }
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
@@ -475,6 +494,11 @@ function App() {
     if (isLoading || isStreaming) return
     setActiveId(null)
     setSidebarOpen(false)
+  }
+
+  // Renomme sans modifier la date de dernière activité (la conversation ne remonte pas dans la liste)
+  function renameConversation(id: string, title: string) {
+    setConversations(prev => prev.map(c => (c.id === id ? { ...c, title } : c)))
   }
 
   function openConversation(id: string) {
@@ -808,6 +832,7 @@ function App() {
         onSelect={openConversation}
         onNew={newConversation}
         onDelete={deleteConversation}
+        onRename={renameConversation}
         onClose={() => setSidebarOpen(false)}
       />
 
@@ -891,6 +916,25 @@ function App() {
                 </span>
                 <p className="text-sm text-zinc-400 dark:text-zinc-500">
                   {activeModel ? "Posez votre première question…" : "Sélectionnez un modèle pour commencer"}
+                </p>
+                {activeModel && (
+                  <div className="mt-4 flex flex-wrap justify-center gap-2 max-w-md">
+                    {SUGGESTIONS.map(text => (
+                      <button
+                        key={text}
+                        onClick={() => {
+                          setInputValue(text)
+                          textareaRef.current?.focus()
+                        }}
+                        className="px-3 py-1.5 rounded-full border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-xs text-zinc-500 dark:text-zinc-400 hover:border-indigo-400 hover:text-indigo-500 dark:hover:border-indigo-500 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-6 text-[11px] text-zinc-300 dark:text-zinc-700 select-none">
+                  Ctrl+K nouvelle conversation · Ctrl+, paramètres · Échap arrêter
                 </p>
               </div>
             )}
