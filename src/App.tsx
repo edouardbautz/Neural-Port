@@ -40,6 +40,7 @@ export interface Conversation {
 
 const HISTORY_KEY = "neural-port-history"
 const CTX_KEY = "neural-port-ctx"
+const MODEL_KEY = "neural-port-model"
 const DEFAULT_CTX = 16384
 const ACTIVE_KEY = "neural-port-active"
 
@@ -172,7 +173,14 @@ function App() {
     return DEFAULT_CTX
   })
   const [maxCtx, setMaxCtx] = useState<number | null>(null)
-  const [activeModel, setActiveModel] = useState<string>()
+  const [activeModel, setActiveModel] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem(MODEL_KEY) ?? undefined
+    } catch {
+      return undefined
+    }
+  })
+  const [modelStatus, setModelStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
   const [inputValue, setInputValue] = useState("")
   const [conversations, setConversations] = useState<Conversation[]>(() => {
     try {
@@ -256,6 +264,53 @@ function App() {
     }
   }, [numCtx])
 
+  useEffect(() => {
+    try {
+      if (activeModel) localStorage.setItem(MODEL_KEY, activeModel)
+      else localStorage.removeItem(MODEL_KEY)
+    } catch {
+      // ignore
+    }
+  }, [activeModel])
+
+  // Contexte réellement demandé à Ollama : le préchargement et le chat doivent utiliser la même valeur,
+  // sinon Ollama recharge le modèle au premier message
+  const effectiveCtx = Math.min(numCtx, ctxSteps(maxCtx).at(-1)!)
+
+  // Précharge le modèle dès sa sélection (ou quand la fenêtre de contexte change), pour pouvoir écrire tout de suite
+  useEffect(() => {
+    if (!activeModel || modelList.length === 0) return
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      setModelStatus("loading")
+      try {
+        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: activeModel, prompt: "", stream: false, options: { num_ctx: effectiveCtx } }),
+          signal: controller.signal
+        })
+        if (!controller.signal.aborted) setModelStatus(res.ok ? "ready" : "error")
+      } catch {
+        if (!controller.signal.aborted) setModelStatus("error")
+      }
+    }, 400) // le curseur de contexte envoie beaucoup de valeurs : on attend qu'il se stabilise
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [activeModel, effectiveCtx, modelList.length])
+
+  // Ollama décharge le modèle après quelques minutes d'inactivité : on garde le voyant à jour
+  useEffect(() => {
+    if (!activeModel) return
+    const id = setInterval(async () => {
+      const loaded = await checkModelLoaded(activeModel)
+      setModelStatus(prev => (prev === "ready" && !loaded ? "idle" : prev === "idle" && loaded ? "ready" : prev))
+    }, 10000)
+    return () => clearInterval(id)
+  }, [activeModel])
+
   // Contexte maximal du modèle sélectionné (borne du curseur)
   useEffect(() => {
     if (!activeModel) return
@@ -290,6 +345,8 @@ function App() {
         const data = (await response.json()) as OllamaModelResponse
         const names = data.models.map(model => model.name)
         setModelList(names)
+        // Le modèle mémorisé a pu être supprimé entre-temps
+        setActiveModel(current => (current && names.includes(current) ? current : undefined))
       } catch (error) {
         console.error("Impossible de contacter Ollama:", error)
       }
@@ -466,7 +523,7 @@ function App() {
             model: activeModel,
             messages: useTools ? [{ role: "system", content: SYSTEM_PROMPT }, ...history] : history,
             ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
-            options: { num_ctx: Math.min(numCtx, ctxSteps(maxCtx).at(-1)!) },
+            options: { num_ctx: effectiveCtx },
             ...(attempt > 0 ? { think: false } : {}),
             stream: true
           }),
@@ -793,6 +850,14 @@ function App() {
                 onClick={() => setIsPopupOpen(!isPopupOpen)}
                 className="h-8 px-3 rounded-lg text-xs font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer flex items-center gap-1"
               >
+                {activeModel && modelStatus !== "idle" && (
+                  <span
+                    title={modelStatus === "ready" ? "Modèle prêt" : modelStatus === "loading" ? "Chargement du modèle…" : "Échec du chargement"}
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                      modelStatus === "ready" ? "bg-emerald-500" : modelStatus === "loading" ? "bg-amber-400 animate-pulse" : "bg-red-500"
+                    }`}
+                  />
+                )}
                 <span className="max-w-32 truncate">{activeModel ?? "Modèle"}</span>
                 <svg
                   className={`w-3 h-3 shrink-0 transition-transform duration-150 ${isPopupOpen ? 'rotate-180' : ''}`}
