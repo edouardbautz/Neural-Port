@@ -4,9 +4,26 @@ import Msg from './components/Msg'
 import Sidebar from './components/Sidebar'
 import FilesPanel from './components/FilesPanel'
 import SettingsPanel from './components/SettingsPanel'
+import CompactionDivider from './components/CompactionDivider'
 import { ctxSteps, isThinkLevel, THINK_LEVELS, type ThinkLevel } from './lib/context'
 import { repairFences } from './lib/markdown'
+import {
+  compactConversation,
+  DEFAULT_COMPACTION,
+  estimatePromptTokens,
+  isSettings as isCompactionSettings,
+  messageText,
+  requestChars,
+  shouldCompact,
+  summaryInjection,
+  visibleThread,
+  type CompactionSettings,
+  type ConversationSummary
+} from './lib/compaction'
+import { makeOllamaSummarizer } from './lib/summarize'
+import { ratioFrom, type Calibration } from './lib/tokens'
 import { extensionFor, extractCodeBlocks, filenameFromRequest, makeFile, type GeneratedFile } from './lib/files'
+import { Fragment } from 'react'
 import { MenuIcon, SlidersIcon } from './components/icons'
 
 const OLLAMA_URL = "http://localhost:11434"
@@ -38,14 +55,22 @@ export interface Conversation {
   messages: Message[]
   createdAt: number
   updatedAt: number
+  summary?: ConversationSummary  // résumé qui remplace, pour le modèle, les messages [0, summary.upTo[
+  calib?: Calibration             // dernière mesure réelle de la taille du prompt (tokens Ollama / caractères envoyés)
 }
 
 const HISTORY_KEY = "neural-port-history"
 const CTX_KEY = "neural-port-ctx"
 const MODEL_KEY = "neural-port-model"
 const THINK_KEY = "neural-port-think"
+const COMPACT_KEY = "neural-port-compaction"
 const DEFAULT_CTX = 16384
 const ACTIVE_KEY = "neural-port-active"
+
+// Un résumé n'est valable que s'il laisse au moins le dernier message utilisateur hors de sa portée
+function validSummary(summary: ConversationSummary | undefined, threadLength: number): ConversationSummary | undefined {
+  return summary && summary.upTo <= threadLength - 1 ? summary : undefined
+}
 
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -197,6 +222,15 @@ function App() {
     return "medium"
   })
   const [thinkSupport, setThinkSupport] = useState<"none" | "toggle" | "levels">("toggle")
+  const [compaction, setCompaction] = useState<CompactionSettings>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(COMPACT_KEY) ?? "null")
+      if (isCompactionSettings(saved)) return saved
+    } catch {
+      // ignore
+    }
+    return DEFAULT_COMPACTION
+  })
   const [liveThinking, setLiveThinking] = useState("")
   const thinkBufferRef = useRef("")
   const [activeModel, setActiveModel] = useState<string | undefined>(() => {
@@ -281,6 +315,14 @@ function App() {
     if (!isAtBottom) return
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" })
   }, [messages, isAtBottom, isLoading, isThinking])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(COMPACT_KEY, JSON.stringify(compaction))
+    } catch {
+      // ignore
+    }
+  }, [compaction])
 
   useEffect(() => {
     try {
@@ -471,16 +513,88 @@ function App() {
     const lastUser = activeConv.messages.map(m => m.role).lastIndexOf("user")
     if (lastUser === -1) return
     const thread = activeConv.messages.slice(0, lastUser + 1)
-    updateMessages(activeConv.id, () => thread)
-    void generate(activeConv.id, thread)
+    const summary = validSummary(activeConv.summary, thread.length)
+    updateConversation(activeConv.id, c => ({ ...c, messages: thread, summary, calib: undefined }))
+    void generate(activeConv.id, thread, { summary })
   }
 
   // Modifie un message de l'utilisateur : la conversation repart de ce point
   function editMessage(index: number, content: string) {
     if (!activeConv || busy || !content.trim()) return
     const thread: Message[] = [...activeConv.messages.slice(0, index), { role: "user", content }]
-    updateMessages(activeConv.id, () => thread)
-    void generate(activeConv.id, thread)
+    const summary = validSummary(activeConv.summary, thread.length)
+    updateConversation(activeConv.id, c => ({ ...c, messages: thread, summary, calib: undefined }))
+    void generate(activeConv.id, thread, { summary })
+  }
+
+  // Compacte la conversation (résumé roulant) et enregistre le résultat ; ne renvoie rien en cas d'échec
+  async function runCompaction(
+    convId: string,
+    messages: Message[],
+    previous: ConversationSummary | undefined,
+    calib: Calibration | undefined,
+    info: { thinking: boolean },
+    signal: AbortSignal,
+    auto: boolean
+  ): Promise<{ summary?: ConversationSummary; failure?: "nothing" | "invalid" | "error" }> {
+    const summarize = makeOllamaSummarizer({ baseUrl: OLLAMA_URL, model: activeModel!, numCtx: effectiveCtx, canThink: info.thinking, signal })
+    try {
+      const result = await compactConversation({
+        messages,
+        previous,
+        ctx: effectiveCtx,
+        ratio: ratioFrom(calib),
+        auto,
+        summarize,
+        onProgress: (done, total) => {
+          if (total > 1 && done < total) setLoadingMessage(`Compaction de la conversation… (${done + 1}/${total})`)
+        }
+      })
+      if (result.ok) {
+        updateConversation(convId, c => ({ ...c, summary: result.summary, calib: undefined }))
+        return { summary: result.summary }
+      }
+      return { failure: result.reason }
+    } catch (error) {
+      if (signal.aborted) throw error
+      console.warn("Compaction impossible :", error)
+      return { failure: "error" }
+    }
+  }
+
+  // Compaction demandée à la main depuis les paramètres
+  async function compactNow() {
+    if (!activeConv || busy || !activeModel) return
+    const conv = activeConv
+    const controller = new AbortController()
+    abortRef.current = controller
+    setLoadingMessage("Compaction de la conversation…")
+    setIsLoading(true)
+    try {
+      const info = await getModelInfo(activeModel)
+      const result = await runCompaction(conv.id, conv.messages, conv.summary, conv.calib, info, controller.signal, false)
+      if (!result.summary) {
+        addNotice(
+          conv.id,
+          result.failure === "nothing"
+            ? "Il n'y a rien à compacter pour l'instant : la conversation est trop courte."
+            : result.failure === "invalid"
+              ? "Le résumé obtenu n'est pas plus court que la conversation : elle est trop courte pour être compactée utilement."
+              : "La compaction a échoué : impossible d'obtenir un résumé du modèle."
+        )
+      }
+    } catch {
+      // arrêt demandé par l'utilisateur
+    } finally {
+      abortRef.current = null
+      setIsLoading(false)
+    }
+  }
+
+  // Annule la compaction : tout l'historique est de nouveau envoyé au modèle
+  function clearSummary() {
+    if (!activeConv) return
+    updateConversation(activeConv.id, c => ({ ...c, summary: undefined, calib: undefined }))
   }
 
   // Rattache la réflexion du modèle à sa réponse pour pouvoir la relire
@@ -546,11 +660,11 @@ function App() {
     }
 
     setInputValue("")
-    await generate(convId, [...(activeConv?.messages ?? []), userMessage])
+    await generate(convId, [...(activeConv?.messages ?? []), userMessage], { summary: activeConv?.summary, calib: activeConv?.calib })
   }
 
   // Demande une réponse au modèle pour la conversation `thread` (qui se termine par un message utilisateur)
-  async function generate(convId: string, thread: Message[]) {
+  async function generate(convId: string, thread: Message[], state: { summary?: ConversationSummary; calib?: Calibration } = {}) {
     const userMessage = [...thread].reverse().find(m => m.role === "user")!
     setIsAtBottom(true)
 
@@ -589,13 +703,30 @@ function App() {
       const info = await getModelInfo(activeModel!)
       const useTools = FILE_REQUEST.test(userMessage.content) && info.tools
 
+      // Compaction : si la requête risque de dépasser le seuil de la fenêtre de contexte, les anciens messages
+      // sont résumés (les messages d'origine restent affichés et conservés)
+      let summary = state.summary
+      let calib = state.calib
+      let tail = visibleThread(thread, summary?.upTo ?? 0)
+      if (compaction.enabled) {
+        const estimate = estimatePromptTokens(requestChars(tail, summary, useTools), tail.length, calib)
+        if (shouldCompact(estimate, effectiveCtx, compaction.threshold)) {
+          setLoadingMessage("Compaction de la conversation…")
+          const result = await runCompaction(convId, thread, summary, calib, info, controller.signal, true)
+          if (result.summary) {
+            summary = result.summary
+            calib = undefined
+            tail = visibleThread(thread, summary.upTo)
+          }
+          setLoadingMessage("Traitement du contexte…")
+        }
+      }
+      // Taille (en caractères) de ce qui est réellement envoyé : sert à calibrer l'estimation avec la mesure d'Ollama
+      const sentChars = requestChars(tail, summary, useTools)
+
       // On n'envoie que role/content à Ollama (stats exclues) ; les fichiers créés sont rappelés au modèle
-      const history = thread.filter(m => !m.notice).map(m => ({
-        role: m.role,
-        content: m.files?.length
-          ? `${m.content}\n[Fichiers créés : ${m.files.map(f => f.name).join(", ")}]`.trim()
-          : m.content
-      }))
+      const history = tail.map(m => ({ role: m.role, content: messageText(m) }))
+      const systemContent = [useTools ? SYSTEM_PROMPT : "", summary ? summaryInjection(summary) : ""].filter(Boolean).join("\n\n")
 
       // Les modèles « réfléchisseurs » épuisent parfois leur limite de tokens en pensant, sans rien répondre.
       // Dans ce cas on relance une fois, sans réflexion, avant d'abandonner.
@@ -626,7 +757,7 @@ function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               model: activeModel,
-              messages: useTools ? [{ role: "system", content: SYSTEM_PROMPT }, ...history] : history,
+              messages: systemContent ? [{ role: "system", content: systemContent }, ...history] : history,
               ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
               options: { num_ctx: effectiveCtx },
               // `think` n'est accepté que par les modèles qui savent raisonner
@@ -688,6 +819,10 @@ function App() {
                   // Valeurs réelles renvoyées par Ollama à la fin du stream.
                   // On ne les garde que si elles sont présentes : jamais inventées.
                   const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
+                  if (chunk.prompt_eval_count && chunk.prompt_eval_count > 0) {
+                    const measured = { tokens: chunk.prompt_eval_count, chars: sentChars }
+                    updateConversation(convId, c => ({ ...c, calib: measured }))
+                  }
                   const tokens = chunk.eval_count ? chunk.eval_count + carriedTokens : undefined
                   const sec = (chunk.eval_duration ?? 0) / 1e9 + carriedSec
                   if (tokens && tokens > 0 && sec > 0) {
@@ -921,8 +1056,10 @@ function App() {
             className="h-full overflow-y-auto px-4 py-8 flex flex-col gap-5"
           >
             {messages.map((msg, index) => (
+              <Fragment key={index}>
+              {activeConv?.summary && index === activeConv.summary.upTo && <CompactionDivider summary={activeConv.summary} />}
+              <div className={activeConv?.summary && index < activeConv.summary.upTo ? "opacity-60" : undefined}>
               <Msg
-                key={index}
                 role={msg.role}
                 content={msg.content}
                 thinking={msg.thinking}
@@ -936,6 +1073,8 @@ function App() {
                 onRegenerate={msg.role === "assistant" && index === messages.length - 1 && !busy ? regenerate : undefined}
                 isStreaming={isStreaming && !isThinking && index === messages.length - 1}
               />
+              </div>
+              </Fragment>
             ))}
             {(isLoading || isThinking) && (
               <div className="flex justify-start msg-in">
@@ -1076,6 +1215,18 @@ function App() {
           maxCtx={maxCtx}
           used={[...messages].reverse().find(m => m.ctxUsed != null)?.ctxUsed ?? null}
           onChange={setNumCtx}
+          compaction={compaction}
+          onCompactionChange={setCompaction}
+          summary={activeConv?.summary ?? null}
+          canCompact={!!activeConv && !busy && !!activeModel && messages.length > 2}
+          nextEstimate={
+            activeConv
+              ? estimatePromptTokens(requestChars(visibleThread(messages, activeConv.summary?.upTo ?? 0), activeConv.summary, false), messages.length, activeConv.calib)
+              : null
+          }
+          effectiveCtx={effectiveCtx}
+          onCompactNow={compactNow}
+          onClearSummary={clearSummary}
           thinkLevel={thinkLevel}
           thinkSupport={thinkSupport}
           onThinkChange={setThinkLevel}

@@ -1,5 +1,6 @@
 import { XIcon } from "./icons"
 import StepSlider from "./StepSlider"
+import { THRESHOLDS, type CompactionSettings, type ConversationSummary } from "../lib/compaction"
 import { ctxSteps, THINK_LEVELS, type ThinkLevel } from "../lib/context"
 
 function fmt(n: number): string {
@@ -11,13 +12,21 @@ interface SettingsPanelProps {
   maxCtx: number | null  // contexte maximal du modèle (null si inconnu)
   used: number | null    // tokens utilisés lors de la dernière réponse
   onChange: (value: number) => void
+  compaction: CompactionSettings
+  onCompactionChange: (value: CompactionSettings) => void
+  summary: ConversationSummary | null  // résumé de la conversation ouverte
+  canCompact: boolean
+  nextEstimate: number | null          // taille estimée du prochain prompt (tokens)
+  effectiveCtx: number
+  onCompactNow: () => void
+  onClearSummary: () => void
   thinkLevel: ThinkLevel
   thinkSupport: "none" | "toggle" | "levels"  // ce que le modèle sait faire
   onThinkChange: (value: ThinkLevel) => void
   onClose: () => void
 }
 
-function SettingsPanel({ numCtx, maxCtx, used, onChange, thinkLevel, thinkSupport, onThinkChange, onClose }: SettingsPanelProps) {
+function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, onClose }: SettingsPanelProps) {
   const steps = ctxSteps(maxCtx)
   // Palier le plus proche de la valeur enregistrée
   const index = steps.reduce((best, s, i) => (Math.abs(s - numCtx) < Math.abs(steps[best] - numCtx) ? i : best), 0)
@@ -85,6 +94,82 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, thinkLevel, thinkSuppor
               réflexion au-delà de la durée prévue puis demande une réponse directe.
             </p>
           )}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">Compaction automatique</span>
+            <button
+              role="switch"
+              aria-checked={compaction.enabled}
+              aria-label="Compaction automatique"
+              onClick={() => onCompactionChange({ ...compaction, enabled: !compaction.enabled })}
+              className={`relative w-10 h-6 shrink-0 rounded-full transition-colors cursor-pointer ${compaction.enabled ? "bg-indigo-500" : "bg-zinc-300 dark:bg-zinc-700"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${compaction.enabled ? "translate-x-4" : ""}`} />
+            </button>
+          </div>
+          <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Quand la conversation approche de la limite de la fenêtre de contexte, les anciens messages sont résumés par le modèle
+            et le résumé les remplace dans ce qui lui est envoyé. Tes messages restent affichés et conservés.
+          </p>
+
+          {compaction.enabled && (
+            <>
+              <div className="flex items-baseline justify-between">
+                <label htmlFor="threshold" className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Seuil de déclenchement</label>
+                <span className="text-xs font-semibold text-indigo-500">{Math.round(compaction.threshold * 100)} % de la fenêtre</span>
+              </div>
+              <StepSlider
+                id="threshold"
+                labels={THRESHOLDS.map(t => `${Math.round(t * 100)} %`)}
+                index={Math.max(0, THRESHOLDS.findIndex(t => Math.abs(t - compaction.threshold) < 0.001))}
+                onChange={i => onCompactionChange({ ...compaction, threshold: THRESHOLDS[i] })}
+              />
+            </>
+          )}
+
+          {nextEstimate != null && (
+            <div className="flex flex-col gap-1.5">
+              <div className="relative h-2 rounded-full bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${nextEstimate / effectiveCtx > compaction.threshold ? "bg-amber-500" : "bg-indigo-500"}`}
+                  style={{ width: `${Math.min(100, (nextEstimate / effectiveCtx) * 100)}%` }}
+                />
+                {compaction.enabled && (
+                  <span className="absolute top-0 bottom-0 w-px bg-zinc-500 dark:bg-zinc-300" style={{ left: `${compaction.threshold * 100}%` }} />
+                )}
+              </div>
+              <span className="text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">
+                Prochain message (estimation) : ≈ {nextEstimate.toLocaleString("fr-FR")} / {effectiveCtx.toLocaleString("fr-FR")} tokens
+              </span>
+            </div>
+          )}
+
+          {summary && (
+            <p className="text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Conversation compactée : {summary.messagesCovered} message{summary.messagesCovered > 1 ? "s" : ""} résumé{summary.messagesCovered > 1 ? "s" : ""}
+              {" "}(≈ {summary.tokensBefore.toLocaleString("fr-FR")} → ≈ {summary.tokensAfter.toLocaleString("fr-FR")} tokens).
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={onCompactNow}
+              disabled={!canCompact}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              Compacter maintenant
+            </button>
+            {summary && (
+              <button
+                onClick={onClearSummary}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer transition-colors"
+              >
+                Annuler la compaction
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col gap-2">
