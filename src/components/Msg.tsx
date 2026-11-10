@@ -56,9 +56,13 @@ function CodeBlock({ children, onSave }: { children?: ReactNode; onSave?: (code:
   const lang = detectLanguage(children)
 
   function handleCopy() {
-    navigator.clipboard.writeText(extractCodeText(children))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    navigator.clipboard.writeText(extractCodeText(children)).then(
+      () => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      },
+      () => {} // presse-papiers indisponible (contexte non sécurisé, permission refusée)
+    )
   }
 
   function handleSave() {
@@ -116,9 +120,13 @@ function Msg({ role, content, thinking, approx, tps, duration, tokens, files, on
   if (tps != null) stats.push({ text: `${pre}${formatNumber(tps)} tokens/s`, hint: `Vitesse de génération : tokens générés ÷ durée de génération.${approxNote}` })
 
   function handleCopy() {
-    navigator.clipboard.writeText(content)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    navigator.clipboard.writeText(content).then(
+      () => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      },
+      () => {}
+    )
   }
 
   if (role === "user") {
@@ -175,7 +183,8 @@ function Msg({ role, content, thinking, approx, tps, duration, tokens, files, on
         {!isStreaming && (
           <button
             onClick={handleCopy}
-            className="absolute -top-2.5 -right-2.5 w-7 h-7 rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-sm flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-all opacity-0 group-hover/msg:opacity-100 cursor-pointer"
+            aria-label="Copier la réponse"
+            className="absolute -top-2.5 -right-2.5 w-7 h-7 rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-sm flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-all opacity-0 group-hover/msg:opacity-100 focus:opacity-100 cursor-pointer"
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>

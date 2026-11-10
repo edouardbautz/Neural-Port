@@ -22,7 +22,7 @@ import {
 } from './lib/compaction'
 import { makeOllamaSummarizer } from './lib/summarize'
 import { ratioFrom, type Calibration } from './lib/tokens'
-import { extensionFor, extractCodeBlocks, filenameFromRequest, makeFile, type GeneratedFile } from './lib/files'
+import { extensionFor, extractCodeBlocks, filenameFromRequest, isFileRequest, makeFile, type GeneratedFile } from './lib/files'
 import { Fragment } from 'react'
 import { MenuIcon, SlidersIcon } from './components/icons'
 
@@ -72,6 +72,17 @@ function validSummary(summary: ConversationSummary | undefined, threadLength: nu
   return summary && summary.upTo <= threadLength - 1 ? summary : undefined
 }
 
+// Une entrée corrompue du stockage ne doit pas faire planter l'application
+function isConversation(value: unknown): value is Conversation {
+  if (!value || typeof value !== "object") return false
+  const c = value as Record<string, unknown>
+  return (
+    typeof c.id === "string" && typeof c.title === "string" && Array.isArray(c.messages) &&
+    c.messages.every(m => !!m && typeof m === "object" && ((m as Message).role === "user" || (m as Message).role === "assistant") && typeof (m as Message).content === "string") &&
+    typeof c.updatedAt === "number"
+  )
+}
+
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
@@ -92,8 +103,6 @@ const SUGGESTIONS = [
   "Résume ce texte en trois phrases",
   "Aide-moi à corriger mon code"
 ]
-
-const FILE_REQUEST = /fichier|file\b|télécharg|telecharg|download|exporte|\.[a-z]{1,5}\b/i
 
 const SYSTEM_PROMPT =
   "Tu disposes de l'outil create_file, qui crée un fichier téléchargeable pour l'utilisateur. " +
@@ -195,8 +204,12 @@ function ChevronDownIcon() {
 
 function App() {
   const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('neural-port-theme')
-    if (saved) return saved === 'dark'
+    try {
+      const saved = localStorage.getItem('neural-port-theme')
+      if (saved) return saved === 'dark'
+    } catch {
+      // stockage indisponible
+    }
     return window.matchMedia('(prefers-color-scheme: dark)').matches
   })
   const [isPopupOpen, setIsPopupOpen] = useState(false)
@@ -246,8 +259,8 @@ function App() {
     try {
       const raw = localStorage.getItem(HISTORY_KEY)
       if (raw) {
-        const parsed = JSON.parse(raw) as Conversation[]
-        if (Array.isArray(parsed)) return parsed
+        const parsed: unknown = JSON.parse(raw)
+        if (Array.isArray(parsed)) return parsed.filter(isConversation)
       }
     } catch {
       // Historique corrompu ou stockage indisponible : on repart de zéro
@@ -290,17 +303,34 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
-    localStorage.setItem('neural-port-theme', isDark ? 'dark' : 'light')
+    try {
+      localStorage.setItem('neural-port-theme', isDark ? 'dark' : 'light')
+    } catch {
+      // ignore
+    }
   }, [isDark])
 
   // Persistance de l'historique et de la conversation active
+  // (écriture différée : pendant le streaming, `conversations` change à chaque fragment de texte)
+  const conversationsRef = useRef(conversations)
   useEffect(() => {
+    conversationsRef.current = conversations
+    const timer = setTimeout(saveHistory, 400)
+    return () => clearTimeout(timer)
+  }, [conversations])
+
+  useEffect(() => {
+    window.addEventListener("pagehide", saveHistory)
+    return () => window.removeEventListener("pagehide", saveHistory)
+  }, [])
+
+  function saveHistory() {
     try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversations))
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationsRef.current))
     } catch {
       // Stockage plein ou bloqué : l'historique ne sera simplement pas conservé
     }
-  }, [conversations])
+  }
 
   useEffect(() => {
     try {
@@ -444,13 +474,15 @@ function App() {
     fetchModels()
   }, [])
 
-  function handleWheel(event: React.WheelEvent) {
+  // Suit la position réelle (molette, tactile, barre de défilement, clavier) : le défilement automatique
+  // se suspend dès qu'on remonte et reprend quand on revient en bas
+  function handleScroll() {
     const container = scrollContainerRef.current
-    if (event.deltaY < 0) {
-      setIsAtBottom(false)
-    } else if (container && container.scrollHeight - container.scrollTop - container.clientHeight < 30) {
-      setIsAtBottom(true)
-    }
+    if (container) setIsAtBottom(container.scrollHeight - container.scrollTop - container.clientHeight < 30)
+  }
+
+  function handleWheel(event: React.WheelEvent) {
+    if (event.deltaY < 0) setIsAtBottom(false)
   }
 
   function scrollToBottom() {
@@ -633,6 +665,8 @@ function App() {
 
   function deleteConversation(id: string) {
     if (!window.confirm("Supprimer cette conversation ?")) return
+    // La génération en cours écrirait dans une conversation disparue
+    if (id === activeId) abortRef.current?.abort()
     setConversations(prev => prev.filter(c => c.id !== id))
     if (activeId === id) setActiveId(null)
   }
@@ -668,9 +702,11 @@ function App() {
     const userMessage = [...thread].reverse().find(m => m.role === "user")!
     setIsAtBottom(true)
 
+    // Verrouille l'interface tout de suite : on ne peut pas relancer un envoi pendant la vérification du modèle
+    setLoadingMessage("Préparation…")
+    setIsLoading(true)
     const modelAlreadyLoaded = await checkModelLoaded(activeModel!)
     setLoadingMessage(modelAlreadyLoaded ? "Traitement du contexte…" : "Chargement du modèle…")
-    setIsLoading(true)
 
     if (!modelAlreadyLoaded) {
       pollingRef.current = setInterval(async () => {
@@ -701,7 +737,7 @@ function App() {
       // L'outil n'est proposé que si le message parle explicitement d'un fichier : un petit modèle
       // l'appellerait sinon dès qu'on lui demande du code, et réfléchirait longuement à la consigne
       const info = await getModelInfo(activeModel!)
-      const useTools = FILE_REQUEST.test(userMessage.content) && info.tools
+      const useTools = isFileRequest(userMessage.content) && info.tools
 
       // Compaction : si la requête risque de dépasser le seuil de la fenêtre de contexte, les anciens messages
       // sont résumés (les messages d'origine restent affichés et conservés)
@@ -809,7 +845,7 @@ function App() {
                   error?: string
                   done?: boolean
                   eval_count?: number
-                prompt_eval_count?: number
+                  prompt_eval_count?: number
                   eval_duration?: number
                 }
 
@@ -965,7 +1001,7 @@ function App() {
         }
 
         // Fichier demandé mais le modèle a écrit du code au lieu d'appeler l'outil : on en fait un fichier
-        if (FILE_REQUEST.test(userMessage.content) && !last.files?.length) {
+        if (isFileRequest(userMessage.content) && !last.files?.length) {
           const blocks = extractCodeBlocks(repairFences(last.content))
           if (blocks.length > 0) {
             const all = c.messages.flatMap(m => m.files ?? [])
@@ -1023,6 +1059,7 @@ function App() {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setSidebarOpen(true)}
+            aria-label="Ouvrir la liste des conversations"
             className="md:hidden w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             <MenuIcon />
@@ -1041,6 +1078,7 @@ function App() {
         </button>
         <button
           onClick={() => setIsDark(!isDark)}
+          aria-label={isDark ? "Passer au thème clair" : "Passer au thème sombre"}
           className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-100 transition-colors cursor-pointer"
         >
           {isDark ? <SunIcon /> : <MoonIcon />}
@@ -1053,10 +1091,11 @@ function App() {
           <div
             ref={scrollContainerRef}
             onWheel={handleWheel}
+            onScroll={handleScroll}
             className="h-full overflow-y-auto px-4 py-8 flex flex-col gap-5"
           >
             {messages.map((msg, index) => (
-              <Fragment key={index}>
+              <Fragment key={`${activeId}-${index}`}>
               {activeConv?.summary && index === activeConv.summary.upTo && <CompactionDivider summary={activeConv.summary} />}
               <div className={activeConv?.summary && index < activeConv.summary.upTo ? "opacity-60" : undefined}>
               <Msg
@@ -1068,7 +1107,7 @@ function App() {
                 tokens={msg.tokens}
                 approx={msg.approx}
                 files={msg.files}
-                onSaveCode={(code, lang) => saveCodeAsFile(index, code, lang)}
+                onSaveCode={isStreaming && index === messages.length - 1 ? undefined : (code, lang) => saveCodeAsFile(index, code, lang)}
                 onEdit={msg.role === "user" && !busy ? (content: string) => editMessage(index, content) : undefined}
                 onRegenerate={msg.role === "assistant" && index === messages.length - 1 && !busy ? regenerate : undefined}
                 isStreaming={isStreaming && !isThinking && index === messages.length - 1}
@@ -1129,6 +1168,8 @@ function App() {
 
           <button
             onClick={scrollToBottom}
+            aria-label="Aller au dernier message"
+            tabIndex={isAtBottom ? -1 : 0}
             className={`absolute bottom-5 left-1/2 -translate-x-1/2 w-8 h-8 rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-md text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 flex items-center justify-center cursor-pointer transition-all duration-200 ${
               isAtBottom ? 'opacity-0 pointer-events-none translate-y-1' : 'opacity-100 translate-y-0'
             }`}
@@ -1154,7 +1195,10 @@ function App() {
             <div className="relative">
               <button
                 onClick={() => setIsPopupOpen(!isPopupOpen)}
-                className="h-8 px-3 rounded-lg text-xs font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer flex items-center gap-1"
+                disabled={busy}
+                aria-label="Choisir le modèle"
+                aria-haspopup="listbox"
+                className="h-8 px-3 rounded-lg text-xs font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-1"
               >
                 {activeModel && modelStatus !== "idle" && (
                   <span
@@ -1193,6 +1237,7 @@ function App() {
             ) : (
               <button
                 onClick={sendMessage}
+                aria-label="Envoyer"
                 disabled={!canSend}
                 className={`w-8 h-8 rounded-xl flex items-center justify-center transition-all ${
                   canSend

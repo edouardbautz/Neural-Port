@@ -15,6 +15,8 @@ const EXTENSIONS: Record<string, string> = {
   dockerfile: "Dockerfile", makefile: "Makefile", diff: "diff", ini: "ini", csv: "csv",
 }
 
+const KNOWN_EXTENSIONS = new Set([...Object.values(EXTENSIONS).map(e => e.toLowerCase()), "txt", "log", "env", "gitignore", "lock", "h", "hpp", "pl", "r", "dart", "vue", "svelte", "svg", "tsv", "cfg", "conf", "bat", "ps1"])
+
 export function extensionFor(lang: string | null): string {
   return (lang && EXTENSIONS[lang.toLowerCase()]) || "txt"
 }
@@ -49,8 +51,11 @@ export function downloadFile(file: GeneratedFile) {
   const a = document.createElement("a")
   a.href = url
   a.download = file.name
+  document.body.appendChild(a)
   a.click()
-  URL.revokeObjectURL(url)
+  a.remove()
+  // Révoquer tout de suite peut annuler le téléchargement sur certains navigateurs
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }
 
 export interface CodeBlock {
@@ -77,5 +82,16 @@ export function extractCodeBlocks(markdown: string): CodeBlock[] {
 
 // Nom de fichier cité dans une demande utilisateur (ex. « crée main.py »)
 export function filenameFromRequest(text: string): string | null {
-  return /(?:^|[\s`"'(])([\w-][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,7})(?=$|[\s`"'),.;:!?])/.exec(text)?.[1] ?? null
+  const re = /(?:^|[\s`"'(])([\w-][\w./-]*\.([A-Za-z][A-Za-z0-9]{0,7}))(?=$|[\s`"'),.;:!?])/g
+  for (const m of text.matchAll(re)) {
+    if (KNOWN_EXTENSIONS.has(m[2].toLowerCase())) return m[1]
+  }
+  return null
+}
+
+const FILE_WORDS = /fichier|\bfiles?\b|télécharg|telecharg|download|exporte/i
+
+// Le message demande-t-il un fichier ? (mot-clé, ou nom de fichier cité)
+export function isFileRequest(text: string): boolean {
+  return FILE_WORDS.test(text) || filenameFromRequest(text) !== null
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { extensionFor, extractCodeBlocks, filenameFromRequest, makeFile } from "./files"
+import { extensionFor, extractCodeBlocks, filenameFromRequest, isFileRequest, makeFile } from "./files"
 
 describe("extractCodeBlocks", () => {
   it("extrait les blocs fermés et ignore le bloc encore ouvert", () => {
@@ -24,6 +24,23 @@ describe("filenameFromRequest", () => {
   it("ne confond pas avec un numéro de version ou une fin de phrase", () => {
     expect(filenameFromRequest("version 1.2 stp")).toBeNull()
     expect(filenameFromRequest("Bonjour. Écris un jeu")).toBeNull()
+  })
+  it("ignore les abréviations et les extensions inconnues", () => {
+    expect(filenameFromRequest("explique les langages, e.g. Python")).toBeNull()
+    expect(filenameFromRequest("c'est-à-dire i.e. simplement")).toBeNull()
+    expect(filenameFromRequest("un fichier foo.zzzz")).toBeNull()
+  })
+})
+
+describe("isFileRequest", () => {
+  it("détecte une demande de fichier", () => {
+    expect(isFileRequest("Écris un script dans un fichier")).toBe(true)
+    expect(isFileRequest("crée main.py")).toBe(true)
+    expect(isFileRequest("Download it please")).toBe(true)
+  })
+  it("ne se déclenche pas sur une question ordinaire", () => {
+    expect(isFileRequest("Explique-moi les langages, e.g. Python")).toBe(false)
+    expect(isFileRequest("Résume ce texte en trois phrases")).toBe(false)
   })
 })
 

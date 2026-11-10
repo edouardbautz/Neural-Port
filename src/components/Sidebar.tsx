@@ -63,6 +63,7 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
           </button>
           <button
             onClick={onClose}
+            aria-label="Fermer"
             className="md:hidden w-8 h-8 shrink-0 rounded-lg flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
           >
             <XIcon />
@@ -141,7 +142,8 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
                     <button
                       onClick={() => onDelete(c.id)}
                       title="Supprimer"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                      aria-label="Supprimer la conversation"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
                     >
                       <TrashIcon />
                     </button>
