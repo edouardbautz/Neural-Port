@@ -17,6 +17,7 @@ export interface Message {
   tps?: number       // tokens/seconde (valeur réelle renvoyée par Ollama)
   duration?: number  // durée de génération en secondes (valeur réelle)
   tokens?: number    // nombre de tokens générés (valeur réelle)
+  notice?: boolean   // message d'information de l'appli (erreur…), non envoyé au modèle
   ctxUsed?: number   // tokens de contexte utilisés (prompt + génération), renvoyés par Ollama
   files?: GeneratedFile[]  // fichiers créés par l'IA (outil create_file) ou depuis un bloc de code
 }
@@ -331,6 +332,16 @@ function App() {
     addFile(activeConv.id, msgIndex, `code-${(activeConv?.messages.flatMap(m => m.files ?? []).length ?? 0) + 1}.${extensionFor(lang)}`, code, lang)
   }
 
+  // Affiche un message d'information à la place d'une bulle vide (erreur, absence de réponse…)
+  function addNotice(convId: string, text: string) {
+    updateConversation(convId, c => {
+      const last = c.messages[c.messages.length - 1]
+      const empty = last?.role === "assistant" && !last.content.trim() && !last.files?.length
+      const base = empty ? c.messages.slice(0, -1) : c.messages
+      return { ...c, messages: [...base, { role: "assistant", content: text, notice: true }] }
+    })
+  }
+
   function newConversation() {
     if (isLoading || isStreaming) return
     setActiveId(null)
@@ -395,6 +406,7 @@ function App() {
 
     // Nom de fichier cité par l'utilisateur (« crée jeu.py ») : il prime sur celui choisi par le modèle
     const requestedName = filenameFromRequest(userMessage.content)
+    let failure: string | null = null  // erreur renvoyée par Ollama pendant le flux
 
     try {
       // L'outil n'est proposé que si le message parle explicitement d'un fichier : un petit modèle
@@ -402,7 +414,7 @@ function App() {
       const useTools = FILE_REQUEST.test(userMessage.content) && (await getModelInfo(activeModel!)).tools
 
       // On n'envoie que role/content à Ollama (stats exclues) ; les fichiers créés sont rappelés au modèle
-      const history = [...(activeConv?.messages ?? []), userMessage].map(m => ({
+      const history = [...(activeConv?.messages ?? []), userMessage].filter(m => !m.notice).map(m => ({
         role: m.role,
         content: m.files?.length
           ? `${m.content}\n[Fichiers créés : ${m.files.map(f => f.name).join(", ")}]`.trim()
@@ -412,6 +424,7 @@ function App() {
       // Les modèles « réfléchisseurs » épuisent parfois leur limite de tokens en pensant, sans rien répondre.
       // Dans ce cas on relance une fois, sans réflexion, avant d'abandonner.
       for (let attempt = 0; attempt < 2; attempt++) {
+        failure = null
         if (attempt > 0) {
           setLoadingMessage("Nouvelle tentative…")
           setIsLoading(true)
@@ -463,11 +476,14 @@ function App() {
                   thinking?: string
                   tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[]
                 }
+                error?: string
                 done?: boolean
                 eval_count?: number
               prompt_eval_count?: number
                 eval_duration?: number
               }
+
+              if (chunk.error) failure = chunk.error
 
               if (chunk.done) {
                 // Valeurs réelles renvoyées par Ollama à la fin du stream.
@@ -573,6 +589,10 @@ function App() {
       }
 
       // Filets de sécurité : quelle que soit la capacité du modèle, l'utilisateur n'est jamais laissé sans résultat
+      if (failure) {
+        addNotice(convId, `Ollama a renvoyé une erreur : ${failure}`)
+        return
+      }
       updateConversation(convId, c => {
         const last = c.messages[c.messages.length - 1]
         const answered = last?.role === "assistant" && (last.content.trim() !== "" || !!last.files?.length)
@@ -581,6 +601,7 @@ function App() {
         if (!answered) {
           const notice: Message = {
             role: "assistant",
+            notice: true,
             content: "Le modèle n'a pas produit de réponse (il a probablement épuisé sa limite en réfléchissant). Reformule ou relance la question."
           }
           return { ...c, messages: [...c.messages.filter((m, i) => !(i === c.messages.length - 1 && m.role === "assistant")), notice] }
@@ -603,6 +624,8 @@ function App() {
       })
     } catch (error) {
       console.error("Erreur lors de l'envoi du message:", error)
+      const detail = error instanceof Error && error.message ? ` (${error.message})` : ""
+      addNotice(convId, `La connexion avec Ollama a été interrompue${detail}. Vérifie qu'Ollama tourne et que le modèle tient en mémoire (essaie une fenêtre de contexte plus petite), puis réessaie.`)
     } finally {
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
