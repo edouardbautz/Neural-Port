@@ -18,6 +18,7 @@ export interface Message {
   duration?: number  // durée de génération en secondes (valeur réelle)
   tokens?: number    // nombre de tokens générés (valeur réelle)
   notice?: boolean   // message d'information de l'appli (erreur…), non envoyé au modèle
+  thinking?: string  // réflexion du modèle (affichée dans un bloc repliable)
   ctxUsed?: number   // tokens de contexte utilisés (prompt + génération), renvoyés par Ollama
   files?: GeneratedFile[]  // fichiers créés par l'IA (outil create_file) ou depuis un bloc de code
 }
@@ -41,6 +42,7 @@ export interface Conversation {
 const HISTORY_KEY = "neural-port-history"
 const CTX_KEY = "neural-port-ctx"
 const MODEL_KEY = "neural-port-model"
+const THINK_KEY = "neural-port-think"
 const DEFAULT_CTX = 16384
 const ACTIVE_KEY = "neural-port-active"
 
@@ -81,7 +83,7 @@ const CREATE_FILE_TOOL = {
 }
 
 // Capacités du modèle (Ollama refuse `tools` s'il ne le gère pas) et sa fenêtre de contexte maximale
-interface ModelInfo { tools: boolean; maxCtx: number | null }
+interface ModelInfo { tools: boolean; thinking: boolean; maxCtx: number | null }
 const modelInfoCache = new Map<string, ModelInfo>()
 async function getModelInfo(model: string): Promise<ModelInfo> {
   const cached = modelInfoCache.get(model)
@@ -97,12 +99,13 @@ async function getModelInfo(model: string): Promise<ModelInfo> {
     const max = key ? data.model_info![key] : null
     const info: ModelInfo = {
       tools: data.capabilities?.includes("tools") ?? false,
+      thinking: data.capabilities?.includes("thinking") ?? false,
       maxCtx: typeof max === "number" ? max : null
     }
     modelInfoCache.set(model, info)
     return info
   } catch {
-    return { tools: false, maxCtx: null }
+    return { tools: false, thinking: false, maxCtx: null }
   }
 }
 
@@ -173,6 +176,15 @@ function App() {
     return DEFAULT_CTX
   })
   const [maxCtx, setMaxCtx] = useState<number | null>(null)
+  const [thinkEnabled, setThinkEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(THINK_KEY) !== "off"
+    } catch {
+      return true
+    }
+  })
+  const [liveThinking, setLiveThinking] = useState("")
+  const thinkBufferRef = useRef("")
   const [activeModel, setActiveModel] = useState<string | undefined>(() => {
     try {
       return localStorage.getItem(MODEL_KEY) ?? undefined
@@ -255,6 +267,14 @@ function App() {
     if (!isAtBottom) return
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" })
   }, [messages, isAtBottom, isLoading, isThinking])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THINK_KEY, thinkEnabled ? "auto" : "off")
+    } catch {
+      // ignore
+    }
+  }, [thinkEnabled])
 
   useEffect(() => {
     try {
@@ -417,6 +437,35 @@ function App() {
     })
   }
 
+  // Régénère la dernière réponse (supprime la réponse actuelle et pose de nouveau la dernière question)
+  function regenerate() {
+    if (!activeConv || busy) return
+    const lastUser = activeConv.messages.map(m => m.role).lastIndexOf("user")
+    if (lastUser === -1) return
+    const thread = activeConv.messages.slice(0, lastUser + 1)
+    updateMessages(activeConv.id, () => thread)
+    void generate(activeConv.id, thread)
+  }
+
+  // Modifie un message de l'utilisateur : la conversation repart de ce point
+  function editMessage(index: number, content: string) {
+    if (!activeConv || busy || !content.trim()) return
+    const thread: Message[] = [...activeConv.messages.slice(0, index), { role: "user", content }]
+    updateMessages(activeConv.id, () => thread)
+    void generate(activeConv.id, thread)
+  }
+
+  // Rattache la réflexion du modèle à sa réponse pour pouvoir la relire
+  function commitThinking(convId: string) {
+    const text = thinkBufferRef.current.trim()
+    if (!text || !hasAssistantMsgRef.current) return
+    updateMessages(convId, msgs => {
+      const last = msgs[msgs.length - 1]
+      if (!last || last.role !== "assistant") return msgs
+      return [...msgs.slice(0, -1), { ...last, thinking: text }]
+    })
+  }
+
   // Interrompt la génération en cours : le texte déjà écrit est conservé
   function stopGeneration() {
     abortRef.current?.abort()
@@ -464,6 +513,12 @@ function App() {
     }
 
     setInputValue("")
+    await generate(convId, [...(activeConv?.messages ?? []), userMessage])
+  }
+
+  // Demande une réponse au modèle pour la conversation `thread` (qui se termine par un message utilisateur)
+  async function generate(convId: string, thread: Message[]) {
+    const userMessage = [...thread].reverse().find(m => m.role === "user")!
     setIsAtBottom(true)
 
     const modelAlreadyLoaded = await checkModelLoaded(activeModel!)
@@ -494,10 +549,11 @@ function App() {
     try {
       // L'outil n'est proposé que si le message parle explicitement d'un fichier : un petit modèle
       // l'appellerait sinon dès qu'on lui demande du code, et réfléchirait longuement à la consigne
-      const useTools = FILE_REQUEST.test(userMessage.content) && (await getModelInfo(activeModel!)).tools
+      const info = await getModelInfo(activeModel!)
+      const useTools = FILE_REQUEST.test(userMessage.content) && info.tools
 
       // On n'envoie que role/content à Ollama (stats exclues) ; les fichiers créés sont rappelés au modèle
-      const history = [...(activeConv?.messages ?? []), userMessage].filter(m => !m.notice).map(m => ({
+      const history = thread.filter(m => !m.notice).map(m => ({
         role: m.role,
         content: m.files?.length
           ? `${m.content}\n[Fichiers créés : ${m.files.map(f => f.name).join(", ")}]`.trim()
@@ -524,7 +580,8 @@ function App() {
             messages: useTools ? [{ role: "system", content: SYSTEM_PROMPT }, ...history] : history,
             ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
             options: { num_ctx: effectiveCtx },
-            ...(attempt > 0 ? { think: false } : {}),
+            // `think` n'est accepté que par les modèles qui savent raisonner
+            ...(info.thinking && (attempt > 0 || !thinkEnabled) ? { think: false } : {}),
             stream: true
           }),
           signal: controller.signal
@@ -534,6 +591,8 @@ function App() {
 
         setIsStreaming(true)
         rawBufferRef.current = ""
+        thinkBufferRef.current = ""
+        setLiveThinking("")
         hasAssistantMsgRef.current = false
         isThinkingRef.current = false
         thinkOpenIdxRef.current = -1
@@ -613,6 +672,11 @@ function App() {
                 })
               }
 
+              if (hasThinking) {
+                thinkBufferRef.current += chunk.message!.thinking
+                setLiveThinking(thinkBufferRef.current)
+              }
+
               if (hasThinking && !isThinkingRef.current) {
                 isThinkingRef.current = true
                 setIsThinking(true)
@@ -669,6 +733,7 @@ function App() {
           }
         }
 
+        commitThinking(convId)
         if (hasAssistantMsgRef.current || controller.signal.aborted) break
       }
 
@@ -710,7 +775,10 @@ function App() {
         return c
       })
     } catch (error) {
-      if (controller.signal.aborted) return
+      if (controller.signal.aborted) {
+        commitThinking(convId)
+        return
+      }
       console.error("Erreur lors de l'envoi du message:", error)
       const detail = error instanceof Error && error.message ? ` (${error.message})` : ""
       addNotice(convId, `La connexion avec Ollama a été interrompue${detail}. Vérifie qu'Ollama tourne et que le modèle tient en mémoire (essaie une fenêtre de contexte plus petite), puis réessaie.`)
@@ -786,11 +854,14 @@ function App() {
                 key={index}
                 role={msg.role}
                 content={msg.content}
+                thinking={msg.thinking}
                 tps={msg.tps}
                 duration={msg.duration}
                 tokens={msg.tokens}
                 files={msg.files}
                 onSaveCode={(code, lang) => saveCodeAsFile(index, code, lang)}
+                onEdit={msg.role === "user" && !busy ? (content: string) => editMessage(index, content) : undefined}
+                onRegenerate={msg.role === "assistant" && index === messages.length - 1 && !busy ? regenerate : undefined}
                 isStreaming={isStreaming && !isThinking && index === messages.length - 1}
               />
             ))}
@@ -805,6 +876,11 @@ function App() {
                   <span className="text-xs text-zinc-400 dark:text-zinc-500">
                     {isLoading ? loadingMessage : "Réflexion en cours…"}
                   </span>
+                  {isThinking && liveThinking && (
+                    <span className="max-w-sm line-clamp-2 text-[11px] italic text-zinc-400 dark:text-zinc-600">
+                      {liveThinking.slice(-200)}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
@@ -909,6 +985,8 @@ function App() {
           maxCtx={maxCtx}
           used={[...messages].reverse().find(m => m.ctxUsed != null)?.ctxUsed ?? null}
           onChange={setNumCtx}
+          thinkEnabled={thinkEnabled}
+          onThinkChange={setThinkEnabled}
           onClose={() => setSettingsOpen(false)}
         />
       )}

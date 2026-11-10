@@ -6,11 +6,13 @@ import rehypeHighlight from "rehype-highlight"
 import type { Message } from "../App"
 import { downloadFile } from "../lib/files"
 import { repairFences } from "../lib/markdown"
-import { CheckIcon } from "./icons"
+import { CheckIcon, PencilIcon, RefreshIcon } from "./icons"
 
 interface MsgProps extends Message {
   isStreaming?: boolean
   onSaveCode?: (code: string, lang: string | null) => void
+  onEdit?: (content: string) => void  // modification d'un message utilisateur
+  onRegenerate?: () => void           // régénération de la dernière réponse
 }
 
 function formatNumber(n: number) {
@@ -99,8 +101,10 @@ function CodeBlock({ children, onSave }: { children?: ReactNode; onSave?: (code:
   )
 }
 
-function Msg({ role, content, tps, duration, tokens, files, onSaveCode, isStreaming = false }: MsgProps) {
+function Msg({ role, content, thinking, tps, duration, tokens, files, onSaveCode, onEdit, onRegenerate, isStreaming = false }: MsgProps) {
   const [copied, setCopied] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(content)
 
   // Statistiques réelles fournies par Ollama (null si l'API ne les renvoie pas)
   const stats: string[] = []
@@ -115,8 +119,45 @@ function Msg({ role, content, tps, duration, tokens, files, onSaveCode, isStream
   }
 
   if (role === "user") {
+    if (editing) {
+      function submit() {
+        setEditing(false)
+        if (draft.trim() && draft !== content) onEdit?.(draft)
+      }
+      return (
+        <div className="flex justify-end msg-in">
+          <div className="w-full max-w-[72%] flex flex-col gap-2 p-3 rounded-2xl border border-indigo-400 dark:border-indigo-500 bg-white dark:bg-zinc-900">
+            <textarea
+              autoFocus
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit() }
+                if (e.key === "Escape") { e.stopPropagation(); setEditing(false) }
+              }}
+              rows={Math.min(8, draft.split("\n").length + 1)}
+              className="w-full bg-transparent outline-none resize-none text-sm leading-relaxed"
+            />
+            <div className="flex justify-end gap-2 text-xs">
+              <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer">Annuler</button>
+              <button onClick={submit} className="px-3 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white font-medium cursor-pointer">Envoyer</button>
+            </div>
+          </div>
+        </div>
+      )
+    }
     return (
-      <div className="flex justify-end msg-in">
+      <div className="flex justify-end items-center gap-2 msg-in group/user">
+        {onEdit && (
+          <button
+            onClick={() => { setDraft(content); setEditing(true) }}
+            title="Modifier le message"
+            aria-label="Modifier le message"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 opacity-0 group-hover/user:opacity-100 focus:opacity-100 transition-all cursor-pointer"
+          >
+            <PencilIcon />
+          </button>
+        )}
         <p className="max-w-[72%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-500 dark:bg-indigo-600 text-white text-sm leading-relaxed whitespace-pre-wrap">
           {content}
         </p>
@@ -135,6 +176,16 @@ function Msg({ role, content, tps, duration, tokens, files, onSaveCode, isStream
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
+        )}
+        {thinking && (
+          <details className="group/think mb-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/50">
+            <summary className="cursor-pointer select-none px-3 py-1.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors">
+              Réflexion du modèle
+            </summary>
+            <p className="max-h-60 overflow-y-auto px-3 pb-3 pt-1 text-xs leading-relaxed italic whitespace-pre-wrap text-zinc-500 dark:text-zinc-400">
+              {thinking}
+            </p>
+          </details>
         )}
         <div className="prose prose-sm prose-zinc dark:prose-invert max-w-none np-prose">
           <Markdown
@@ -175,14 +226,24 @@ function Msg({ role, content, tps, duration, tokens, files, onSaveCode, isStream
           ))}
         </div>
       )}
-      {!isStreaming && stats.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-1.5 px-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 tabular-nums">
+      {!isStreaming && (stats.length > 0 || onRegenerate) && (
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 tabular-nums">
           {stats.map((s, i) => (
             <span key={i} className="flex items-center gap-x-1.5">
               {i > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
               {s}
             </span>
           ))}
+          {onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              className="flex items-center gap-1 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+            >
+              {stats.length > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
+              <RefreshIcon />
+              Régénérer
+            </button>
+          )}
         </div>
       )}
     </div>

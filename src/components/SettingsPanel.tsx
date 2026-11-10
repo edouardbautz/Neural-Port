@@ -10,10 +10,12 @@ interface SettingsPanelProps {
   maxCtx: number | null  // contexte maximal du modèle (null si inconnu)
   used: number | null    // tokens utilisés lors de la dernière réponse
   onChange: (value: number) => void
+  thinkEnabled: boolean
+  onThinkChange: (value: boolean) => void
   onClose: () => void
 }
 
-function SettingsPanel({ numCtx, maxCtx, used, onChange, onClose }: SettingsPanelProps) {
+function SettingsPanel({ numCtx, maxCtx, used, onChange, thinkEnabled, onThinkChange, onClose }: SettingsPanelProps) {
   const steps = ctxSteps(maxCtx)
   // Palier le plus proche de la valeur enregistrée
   const index = steps.reduce((best, s, i) => (Math.abs(s - numCtx) < Math.abs(steps[best] - numCtx) ? i : best), 0)
@@ -60,6 +62,24 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, onClose }: SettingsPane
             C'est la mémoire de travail du modèle : ta question, l'historique, sa réflexion et sa réponse doivent tenir dedans.
             Trop petite, il oublie le début de la conversation ou s'arrête en pleine réflexion.
             Plus grande, elle consomme plus de mémoire et ralentit le chargement du modèle.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-medium">Réflexion du modèle</span>
+            <button
+              role="switch"
+              aria-checked={thinkEnabled}
+              onClick={() => onThinkChange(!thinkEnabled)}
+              className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${thinkEnabled ? "bg-indigo-500" : "bg-zinc-300 dark:bg-zinc-700"}`}
+            >
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${thinkEnabled ? "translate-x-4" : ""}`} />
+            </button>
+          </div>
+          <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Les modèles « raisonneurs » réfléchissent avant de répondre : plus de précision, mais parfois beaucoup d'attente,
+            même pour une question simple. Désactivée, la réponse est immédiate.
           </p>
         </div>
 
