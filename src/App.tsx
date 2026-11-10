@@ -2,7 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Popup from './components/Popup'
 import Msg from './components/Msg'
 import Sidebar from './components/Sidebar'
-import { MenuIcon } from './components/icons'
+import FilesPanel from './components/FilesPanel'
+import SettingsPanel from './components/SettingsPanel'
+import { ctxSteps } from './lib/context'
+import { repairFences } from './lib/markdown'
+import { extensionFor, extractCodeBlocks, filenameFromRequest, makeFile, type GeneratedFile } from './lib/files'
+import { MenuIcon, SlidersIcon } from './components/icons'
 
 const OLLAMA_URL = "http://localhost:11434"
 
@@ -12,6 +17,8 @@ export interface Message {
   tps?: number       // tokens/seconde (valeur réelle renvoyée par Ollama)
   duration?: number  // durée de génération en secondes (valeur réelle)
   tokens?: number    // nombre de tokens générés (valeur réelle)
+  ctxUsed?: number   // tokens de contexte utilisés (prompt + génération), renvoyés par Ollama
+  files?: GeneratedFile[]  // fichiers créés par l'IA (outil create_file) ou depuis un bloc de code
 }
 
 export interface OllamaModelResponse {
@@ -31,6 +38,8 @@ export interface Conversation {
 }
 
 const HISTORY_KEY = "neural-port-history"
+const CTX_KEY = "neural-port-ctx"
+const DEFAULT_CTX = 16384
 const ACTIVE_KEY = "neural-port-active"
 
 function makeId(): string {
@@ -44,6 +53,54 @@ async function checkModelLoaded(model: string): Promise<boolean> {
     return data.models?.some(m => m.name === model) ?? false
   } catch {
     return false
+  }
+}
+
+const FILE_REQUEST = /fichier|file\b|télécharg|telecharg|download|exporte|\.[a-z]{1,5}\b/i
+
+const SYSTEM_PROMPT =
+  "Tu disposes de l'outil create_file, qui crée un fichier téléchargeable pour l'utilisateur. " +
+  "Utilise-le pour livrer le fichier demandé, avec son contenu complet et exact."
+
+const CREATE_FILE_TOOL = {
+  type: "function",
+  function: {
+    name: "create_file",
+    description: "Crée un fichier téléchargeable. À n'utiliser que si l'utilisateur a demandé un fichier.",
+    parameters: {
+      type: "object",
+      properties: {
+        filename: { type: "string", description: "Nom du fichier avec son extension, ex: main.py" },
+        content: { type: "string", description: "Contenu complet du fichier" }
+      },
+      required: ["filename", "content"]
+    }
+  }
+}
+
+// Capacités du modèle (Ollama refuse `tools` s'il ne le gère pas) et sa fenêtre de contexte maximale
+interface ModelInfo { tools: boolean; maxCtx: number | null }
+const modelInfoCache = new Map<string, ModelInfo>()
+async function getModelInfo(model: string): Promise<ModelInfo> {
+  const cached = modelInfoCache.get(model)
+  if (cached) return cached
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model })
+    })
+    const data = (await res.json()) as { capabilities?: string[]; model_info?: Record<string, unknown> }
+    const key = Object.keys(data.model_info ?? {}).find(k => k.endsWith(".context_length"))
+    const max = key ? data.model_info![key] : null
+    const info: ModelInfo = {
+      tools: data.capabilities?.includes("tools") ?? false,
+      maxCtx: typeof max === "number" ? max : null
+    }
+    modelInfoCache.set(model, info)
+    return info
+  } catch {
+    return { tools: false, maxCtx: null }
   }
 }
 
@@ -95,6 +152,17 @@ function App() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches
   })
   const [isPopupOpen, setIsPopupOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [numCtx, setNumCtx] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem(CTX_KEY))
+      if (saved > 0) return saved
+    } catch {
+      // ignore
+    }
+    return DEFAULT_CTX
+  })
+  const [maxCtx, setMaxCtx] = useState<number | null>(null)
   const [activeModel, setActiveModel] = useState<string>()
   const [inputValue, setInputValue] = useState("")
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -137,6 +205,11 @@ function App() {
   const activeConv = conversations.find(c => c.id === activeId) ?? null
   const messages = useMemo(() => activeConv?.messages ?? [], [activeConv])
 
+  // Fichiers générés (outil create_file ou bouton sur un bloc de code). Le panneau se rouvre quand un nouveau fichier est prêt.
+  const files = useMemo(() => messages.flatMap(m => m.files ?? []), [messages])
+  const [panelClosed, setPanelClosed] = useState<{ id: string | null; count: number }>({ id: null, count: 0 })
+  const panelOpen = files.length > 0 && !(panelClosed.id === activeId && panelClosed.count === files.length)
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark)
     localStorage.setItem('neural-port-theme', isDark ? 'dark' : 'light')
@@ -164,6 +237,24 @@ function App() {
     if (!isAtBottom) return
     messagesEndRef.current?.scrollIntoView({ behavior: "instant" })
   }, [messages, isAtBottom, isLoading, isThinking])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CTX_KEY, String(numCtx))
+    } catch {
+      // ignore
+    }
+  }, [numCtx])
+
+  // Contexte maximal du modèle sélectionné (borne du curseur)
+  useEffect(() => {
+    if (!activeModel) return
+    let cancelled = false
+    getModelInfo(activeModel).then(info => {
+      if (!cancelled) setMaxCtx(info.maxCtx)
+    })
+    return () => { cancelled = true }
+  }, [activeModel])
 
   // Renvoie le curseur dans l'input dès qu'il est utilisable :
   // à l'arrivée sur la page, au choix d'un modèle, et à la fin de chaque réponse
@@ -220,6 +311,24 @@ function App() {
 
   function updateMessages(convId: string, fn: (msgs: Message[]) => Message[]) {
     updateConversation(convId, c => ({ ...c, messages: fn(c.messages) }))
+  }
+
+  // Ajoute un fichier au message d'indice msgIndex (le crée s'il n'existe pas déjà dans la conversation)
+  function addFile(convId: string, msgIndex: number, name: string, content: string, lang: string | null) {
+    updateConversation(convId, c => {
+      const all = c.messages.flatMap(m => m.files ?? [])
+      if (c.messages[msgIndex]?.files?.some(f => f.content.trim() === content.trim())) return c
+      const file = makeFile(name, content, lang, all)
+      return {
+        ...c,
+        messages: c.messages.map((m, i) => (i === msgIndex ? { ...m, files: [...(m.files ?? []), file] } : m)),
+      }
+    })
+  }
+
+  function saveCodeAsFile(msgIndex: number, code: string, lang: string | null) {
+    if (!activeConv) return
+    addFile(activeConv.id, msgIndex, `code-${(activeConv?.messages.flatMap(m => m.files ?? []).length ?? 0) + 1}.${extensionFor(lang)}`, code, lang)
   }
 
   function newConversation() {
@@ -284,127 +393,214 @@ function App() {
       textareaRef.current.style.height = 'auto'
     }
 
+    // Nom de fichier cité par l'utilisateur (« crée jeu.py ») : il prime sur celui choisi par le modèle
+    const requestedName = filenameFromRequest(userMessage.content)
+
     try {
-      const response = await fetch(`${OLLAMA_URL}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: activeModel,
-          // On n'envoie que role/content à Ollama (stats exclues)
-          messages: [...(activeConv?.messages ?? []), userMessage].map(m => ({ role: m.role, content: m.content })),
-          stream: true
+      // L'outil n'est proposé que si le message parle explicitement d'un fichier : un petit modèle
+      // l'appellerait sinon dès qu'on lui demande du code, et réfléchirait longuement à la consigne
+      const useTools = FILE_REQUEST.test(userMessage.content) && (await getModelInfo(activeModel!)).tools
+
+      // On n'envoie que role/content à Ollama (stats exclues) ; les fichiers créés sont rappelés au modèle
+      const history = [...(activeConv?.messages ?? []), userMessage].map(m => ({
+        role: m.role,
+        content: m.files?.length
+          ? `${m.content}\n[Fichiers créés : ${m.files.map(f => f.name).join(", ")}]`.trim()
+          : m.content
+      }))
+
+      // Les modèles « réfléchisseurs » épuisent parfois leur limite de tokens en pensant, sans rien répondre.
+      // Dans ce cas on relance une fois, sans réflexion, avant d'abandonner.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          setLoadingMessage("Nouvelle tentative…")
+          setIsLoading(true)
+          setIsStreaming(false)
+          setIsThinking(false)
+          isThinkingRef.current = false
+        }
+
+        const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: activeModel,
+            messages: useTools ? [{ role: "system", content: SYSTEM_PROMPT }, ...history] : history,
+            ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
+            options: { num_ctx: Math.min(numCtx, ctxSteps(maxCtx).at(-1)!) },
+            ...(attempt > 0 ? { think: false } : {}),
+            stream: true
+          })
         })
-      })
 
-      if (!response.body) throw new Error("Réponse vide du serveur")
+        if (!response.body) throw new Error("Réponse vide du serveur")
 
-      setIsStreaming(true)
-      rawBufferRef.current = ""
-      hasAssistantMsgRef.current = false
-      isThinkingRef.current = false
-      thinkOpenIdxRef.current = -1
-      thinkCloseIdxRef.current = -1
+        setIsStreaming(true)
+        rawBufferRef.current = ""
+        hasAssistantMsgRef.current = false
+        isThinkingRef.current = false
+        thinkOpenIdxRef.current = -1
+        thinkCloseIdxRef.current = -1
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let firstChunk = true
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let firstChunk = true
+        let carry = ""  // fin de ligne incomplète (un appel d'outil avec un gros fichier peut être coupé entre deux lectures)
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        const lines = decoder.decode(value).split('\n').filter(line => line.trim())
+          const parts = (carry + decoder.decode(value, { stream: true })).split('\n')
+          carry = parts.pop() ?? ""
+          const lines = parts.filter(line => line.trim())
 
-        for (const line of lines) {
-          try {
-            const chunk = JSON.parse(line) as {
-              message?: { content: string; thinking?: string }
-              done?: boolean
-              eval_count?: number
-              eval_duration?: number
-            }
-
-            if (chunk.done) {
-              // Valeurs réelles renvoyées par Ollama à la fin du stream.
-              // On ne les garde que si elles sont présentes : jamais inventées.
-              const tokens = chunk.eval_count
-              const sec = (chunk.eval_duration ?? 0) / 1e9
-              if (tokens && tokens > 0 && sec > 0) {
-                updateMessages(convId, prev => {
-                  const last = prev[prev.length - 1]
-                  if (!last || last.role !== "assistant") return prev
-                  const arr = [...prev]
-                  arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens }
-                  return arr
-                })
-              }
-            }
-
-            const hasThinking = !!chunk.message?.thinking
-            const hasContent = !!chunk.message?.content
-
-            if (!hasThinking && !hasContent) continue
-
-            if (firstChunk) {
-              setIsLoading(false)
-              firstChunk = false
-            }
-
-            if (hasThinking && !isThinkingRef.current) {
-              isThinkingRef.current = true
-              setIsThinking(true)
-            }
-
-            if (hasContent) {
-              rawBufferRef.current += chunk.message!.content
-              const raw = rawBufferRef.current
-
-              if (thinkOpenIdxRef.current === -1)
-                thinkOpenIdxRef.current = raw.indexOf('<think>')
-              if (thinkOpenIdxRef.current !== -1 && thinkCloseIdxRef.current === -1)
-                thinkCloseIdxRef.current = raw.indexOf('</think>')
-
-              const thinkOpenIdx = thinkOpenIdxRef.current
-              const thinkCloseIdx = thinkCloseIdxRef.current
-              const beforeThink = thinkOpenIdx > 0 ? raw.slice(0, thinkOpenIdx) : ''
-
-              let displayContent: string
-              let tagThinking: boolean
-
-              if (thinkOpenIdx === -1) {
-                displayContent = raw
-                tagThinking = false
-              } else if (thinkCloseIdx === -1) {
-                displayContent = beforeThink
-                tagThinking = true
-              } else {
-                displayContent = beforeThink + raw.slice(thinkCloseIdx + '</think>'.length).trimStart()
-                tagThinking = false
+          for (const line of lines) {
+            try {
+              const chunk = JSON.parse(line) as {
+                message?: {
+                  content: string
+                  thinking?: string
+                  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[]
+                }
+                done?: boolean
+                eval_count?: number
+              prompt_eval_count?: number
+                eval_duration?: number
               }
 
-              if (!tagThinking && isThinkingRef.current) {
-                isThinkingRef.current = false
-                setIsThinking(false)
-              }
-
-              if (displayContent.length > 0) {
-                if (!hasAssistantMsgRef.current) {
-                  updateMessages(convId, prev => [...prev, { role: "assistant", content: displayContent }])
-                  hasAssistantMsgRef.current = true
-                } else {
+              if (chunk.done) {
+                // Valeurs réelles renvoyées par Ollama à la fin du stream.
+                // On ne les garde que si elles sont présentes : jamais inventées.
+                const tokens = chunk.eval_count
+              const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
+                const sec = (chunk.eval_duration ?? 0) / 1e9
+                if (tokens && tokens > 0 && sec > 0) {
                   updateMessages(convId, prev => {
-                    const updated = [...prev]
-                    updated[updated.length - 1] = { ...updated[updated.length - 1], content: displayContent }
-                    return updated
+                    const last = prev[prev.length - 1]
+                    if (!last || last.role !== "assistant") return prev
+                    const arr = [...prev]
+                    arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens, ctxUsed }
+                    return arr
                   })
                 }
               }
+
+              const hasThinking = !!chunk.message?.thinking
+              const hasContent = !!chunk.message?.content
+              const toolCalls = chunk.message?.tool_calls ?? []
+
+              if (!hasThinking && !hasContent && toolCalls.length === 0) continue
+
+              if (firstChunk) {
+                setIsLoading(false)
+                firstChunk = false
+              }
+
+              // Appels de l'outil create_file : on ignore tout ce qui est mal formé
+              for (const call of toolCalls) {
+                const { filename, content } = call.function.arguments ?? {}
+                if (call.function.name !== "create_file" || typeof filename !== "string" || typeof content !== "string" || !filename.trim() || !content.trim()) continue
+                if (!hasAssistantMsgRef.current) {
+                  updateMessages(convId, prev => [...prev, { role: "assistant", content: "" }])
+                  hasAssistantMsgRef.current = true
+                }
+                updateConversation(convId, c => {
+                  const idx = c.messages.length - 1
+                  const already = c.messages[idx]?.files?.length ?? 0
+                  const file = makeFile(already === 0 && requestedName ? requestedName : filename, content, null, c.messages.flatMap(m => m.files ?? []))
+                  return { ...c, messages: c.messages.map((m, i) => (i === idx ? { ...m, files: [...(m.files ?? []), file] } : m)) }
+                })
+              }
+
+              if (hasThinking && !isThinkingRef.current) {
+                isThinkingRef.current = true
+                setIsThinking(true)
+              }
+
+              if (hasContent) {
+                rawBufferRef.current += chunk.message!.content
+                const raw = rawBufferRef.current
+
+                if (thinkOpenIdxRef.current === -1)
+                  thinkOpenIdxRef.current = raw.indexOf('<think>')
+                if (thinkOpenIdxRef.current !== -1 && thinkCloseIdxRef.current === -1)
+                  thinkCloseIdxRef.current = raw.indexOf('</think>')
+
+                const thinkOpenIdx = thinkOpenIdxRef.current
+                const thinkCloseIdx = thinkCloseIdxRef.current
+                const beforeThink = thinkOpenIdx > 0 ? raw.slice(0, thinkOpenIdx) : ''
+
+                let displayContent: string
+                let tagThinking: boolean
+
+                if (thinkOpenIdx === -1) {
+                  displayContent = raw
+                  tagThinking = false
+                } else if (thinkCloseIdx === -1) {
+                  displayContent = beforeThink
+                  tagThinking = true
+                } else {
+                  displayContent = beforeThink + raw.slice(thinkCloseIdx + '</think>'.length).trimStart()
+                  tagThinking = false
+                }
+
+                if (!tagThinking && isThinkingRef.current) {
+                  isThinkingRef.current = false
+                  setIsThinking(false)
+                }
+
+                if (displayContent.length > 0) {
+                  if (!hasAssistantMsgRef.current) {
+                    updateMessages(convId, prev => [...prev, { role: "assistant", content: displayContent }])
+                    hasAssistantMsgRef.current = true
+                  } else {
+                    updateMessages(convId, prev => {
+                      const updated = [...prev]
+                      updated[updated.length - 1] = { ...updated[updated.length - 1], content: displayContent }
+                      return updated
+                    })
+                  }
+                }
+              }
+            } catch {
+              // ignore incomplete JSON chunks
             }
-          } catch {
-            // ignore incomplete JSON chunks
           }
         }
+
+        if (hasAssistantMsgRef.current) break
       }
+
+      // Filets de sécurité : quelle que soit la capacité du modèle, l'utilisateur n'est jamais laissé sans résultat
+      updateConversation(convId, c => {
+        const last = c.messages[c.messages.length - 1]
+        const answered = last?.role === "assistant" && (last.content.trim() !== "" || !!last.files?.length)
+
+        // Rien d'exploitable (ex. le modèle a épuisé sa limite en réfléchissant)
+        if (!answered) {
+          const notice: Message = {
+            role: "assistant",
+            content: "Le modèle n'a pas produit de réponse (il a probablement épuisé sa limite en réfléchissant). Reformule ou relance la question."
+          }
+          return { ...c, messages: [...c.messages.filter((m, i) => !(i === c.messages.length - 1 && m.role === "assistant")), notice] }
+        }
+
+        // Fichier demandé mais le modèle a écrit du code au lieu d'appeler l'outil : on en fait un fichier
+        if (FILE_REQUEST.test(userMessage.content) && !last.files?.length) {
+          const blocks = extractCodeBlocks(repairFences(last.content))
+          if (blocks.length > 0) {
+            const all = c.messages.flatMap(m => m.files ?? [])
+            const created: GeneratedFile[] = []
+            blocks.forEach((b, i) => {
+              const name = blocks.length === 1 && requestedName ? requestedName : `code-${i + 1}.${extensionFor(b.lang)}`
+              created.push(makeFile(name, b.code, b.lang, [...all, ...created]))
+            })
+            return { ...c, messages: c.messages.map((m, i) => (i === c.messages.length - 1 ? { ...m, files: created } : m)) }
+          }
+        }
+        return c
+      })
     } catch (error) {
       console.error("Erreur lors de l'envoi du message:", error)
     } finally {
@@ -448,12 +644,21 @@ function App() {
             Neural-Port
           </span>
         </div>
+        <div className="flex items-center gap-1">
+        <button
+          onClick={() => setSettingsOpen(o => !o)}
+          aria-label="Paramètres"
+          className={`w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer ${settingsOpen ? "text-indigo-500" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100"}`}
+        >
+          <SlidersIcon />
+        </button>
         <button
           onClick={() => setIsDark(!isDark)}
           className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-100 transition-colors cursor-pointer"
         >
           {isDark ? <SunIcon /> : <MoonIcon />}
         </button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-hidden flex justify-center">
@@ -471,6 +676,8 @@ function App() {
                 tps={msg.tps}
                 duration={msg.duration}
                 tokens={msg.tokens}
+                files={msg.files}
+                onSaveCode={(code, lang) => saveCodeAsFile(index, code, lang)}
                 isStreaming={isStreaming && !isThinking && index === messages.length - 1}
               />
             ))}
@@ -563,6 +770,24 @@ function App() {
       </div>
 
       </div>
+
+      {settingsOpen && (
+        <SettingsPanel
+          numCtx={numCtx}
+          maxCtx={maxCtx}
+          used={[...messages].reverse().find(m => m.ctxUsed != null)?.ctxUsed ?? null}
+          onChange={setNumCtx}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {panelOpen && !settingsOpen && (
+        <FilesPanel
+          key={activeId}
+          files={files}
+          onClose={() => setPanelClosed({ id: activeId, count: files.length })}
+        />
+      )}
 
     </div>
   )
