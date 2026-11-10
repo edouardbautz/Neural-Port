@@ -591,9 +591,9 @@ function App() {
     }
   }
 
-  // Annule la compaction : tout l'historique est de nouveau envoyé au modèle
+  // Supprime le résumé : tout l'historique d'origine est de nouveau envoyé au modèle
   function clearSummary() {
-    if (!activeConv) return
+    if (!activeConv || busy) return
     updateConversation(activeConv.id, c => ({ ...c, summary: undefined, calib: undefined }))
   }
 
@@ -1219,6 +1219,7 @@ function App() {
           onCompactionChange={setCompaction}
           summary={activeConv?.summary ?? null}
           canCompact={!!activeConv && !busy && !!activeModel && messages.length > 2}
+          busy={busy}
           nextEstimate={
             activeConv
               ? estimatePromptTokens(requestChars(visibleThread(messages, activeConv.summary?.upTo ?? 0), activeConv.summary, false), messages.length, activeConv.calib)

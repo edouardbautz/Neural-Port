@@ -16,6 +16,7 @@ interface SettingsPanelProps {
   onCompactionChange: (value: CompactionSettings) => void
   summary: ConversationSummary | null  // résumé de la conversation ouverte
   canCompact: boolean
+  busy: boolean                        // une génération ou une compaction est en cours
   nextEstimate: number | null          // taille estimée du prochain prompt (tokens)
   effectiveCtx: number
   onCompactNow: () => void
@@ -26,7 +27,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, onClose }: SettingsPanelProps) {
+function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, onClose }: SettingsPanelProps) {
   const steps = ctxSteps(maxCtx)
   // Palier le plus proche de la valeur enregistrée
   const index = steps.reduce((best, s, i) => (Math.abs(s - numCtx) < Math.abs(steps[best] - numCtx) ? i : best), 0)
@@ -164,9 +165,11 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactio
             {summary && (
               <button
                 onClick={onClearSummary}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer transition-colors"
+                disabled={busy}
+                title="Le modèle reverra tous les messages d'origine à la place du résumé"
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-40 disabled:hover:text-zinc-500 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition-colors"
               >
-                Annuler la compaction
+                Supprimer le résumé
               </button>
             )}
           </div>
