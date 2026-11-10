@@ -312,9 +312,14 @@ function App() {
 
   // Persistance de l'historique et de la conversation active
   // (écriture différée : pendant le streaming, `conversations` change à chaque fragment de texte)
+  // `dirtyRef` : seul un onglet qui a modifié l'historique l'écrit, sinon il écraserait celui d'un autre onglet
   const conversationsRef = useRef(conversations)
+  const dirtyRef = useRef(false)
+  const loadedRef = useRef(conversations) // état lu au démarrage : tant qu'il n'a pas changé, rien à écrire
   useEffect(() => {
     conversationsRef.current = conversations
+    if (conversations === loadedRef.current) return
+    dirtyRef.current = true
     const timer = setTimeout(saveHistory, 400)
     return () => clearTimeout(timer)
   }, [conversations])
@@ -325,8 +330,10 @@ function App() {
   }, [])
 
   function saveHistory() {
+    if (!dirtyRef.current) return
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationsRef.current))
+      dirtyRef.current = false
     } catch {
       // Stockage plein ou bloqué : l'historique ne sera simplement pas conservé
     }
