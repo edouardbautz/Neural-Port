@@ -67,6 +67,9 @@ const SUGGESTIONS = [
   "Aide-moi à corriger mon code"
 ]
 
+// Au-delà de ce volume de réflexion (~1 500 tokens) sans début de réponse, on abandonne la réflexion et on relance sans
+const THINK_BUDGET_CHARS = 6000
+
 const FILE_REQUEST = /fichier|file\b|télécharg|telecharg|download|exporte|\.[a-z]{1,5}\b/i
 
 const SYSTEM_PROMPT =
@@ -586,175 +589,196 @@ function App() {
 
       // Les modèles « réfléchisseurs » épuisent parfois leur limite de tokens en pensant, sans rien répondre.
       // Dans ce cas on relance une fois, sans réflexion, avant d'abandonner.
+      let retryMessage = "Nouvelle tentative…"
       for (let attempt = 0; attempt < 2; attempt++) {
         failure = null
         if (attempt > 0) {
-          setLoadingMessage("Nouvelle tentative…")
+          setLoadingMessage(retryMessage)
           setIsLoading(true)
           setIsStreaming(false)
           setIsThinking(false)
           isThinkingRef.current = false
         }
 
-        const response = await fetch(`${OLLAMA_URL}/api/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: activeModel,
-            messages: useTools ? [{ role: "system", content: SYSTEM_PROMPT }, ...history] : history,
-            ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
-            options: { num_ctx: effectiveCtx },
-            // `think` n'est accepté que par les modèles qui savent raisonner
-            ...(info.thinking && (attempt > 0 || !thinkEnabled) ? { think: false } : {}),
-            stream: true
-          }),
-          signal: controller.signal
-        })
+        // Annulation propre à cette tentative : l'arrêt demandé par l'utilisateur s'y propage aussi
+        const attemptCtl = new AbortController()
+        const onUserAbort = () => attemptCtl.abort()
+        controller.signal.addEventListener("abort", onUserAbort)
+        const canOverthink = attempt === 0 && info.thinking && thinkEnabled
+        let overthought = false
 
-        if (!response.body) throw new Error("Réponse vide du serveur")
+        try {
+          const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: activeModel,
+              messages: useTools ? [{ role: "system", content: SYSTEM_PROMPT }, ...history] : history,
+              ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
+              options: { num_ctx: effectiveCtx },
+              // `think` n'est accepté que par les modèles qui savent raisonner
+              ...(info.thinking && (attempt > 0 || !thinkEnabled) ? { think: false } : {}),
+              stream: true
+            }),
+            signal: attemptCtl.signal
+          })
 
-        setIsStreaming(true)
-        rawBufferRef.current = ""
-        thinkBufferRef.current = ""
-        setLiveThinking("")
-        hasAssistantMsgRef.current = false
-        isThinkingRef.current = false
-        thinkOpenIdxRef.current = -1
-        thinkCloseIdxRef.current = -1
+          if (!response.body) throw new Error("Réponse vide du serveur")
 
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let firstChunk = true
-        let carry = ""  // fin de ligne incomplète (un appel d'outil avec un gros fichier peut être coupé entre deux lectures)
+          setIsStreaming(true)
+          rawBufferRef.current = ""
+          thinkBufferRef.current = ""
+          setLiveThinking("")
+          hasAssistantMsgRef.current = false
+          isThinkingRef.current = false
+          thinkOpenIdxRef.current = -1
+          thinkCloseIdxRef.current = -1
 
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let firstChunk = true
+          let carry = ""  // fin de ligne incomplète (un appel d'outil avec un gros fichier peut être coupé entre deux lectures)
 
-          const parts = (carry + decoder.decode(value, { stream: true })).split('\n')
-          carry = parts.pop() ?? ""
-          const lines = parts.filter(line => line.trim())
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
 
-          for (const line of lines) {
-            try {
-              const chunk = JSON.parse(line) as {
-                message?: {
-                  content: string
-                  thinking?: string
-                  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[]
-                }
-                error?: string
-                done?: boolean
-                eval_count?: number
-              prompt_eval_count?: number
-                eval_duration?: number
-              }
+            const parts = (carry + decoder.decode(value, { stream: true })).split('\n')
+            carry = parts.pop() ?? ""
+            const lines = parts.filter(line => line.trim())
 
-              if (chunk.error) failure = chunk.error
-
-              if (chunk.done) {
-                // Valeurs réelles renvoyées par Ollama à la fin du stream.
-                // On ne les garde que si elles sont présentes : jamais inventées.
-                const tokens = chunk.eval_count
-              const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
-                const sec = (chunk.eval_duration ?? 0) / 1e9
-                if (tokens && tokens > 0 && sec > 0) {
-                  updateMessages(convId, prev => {
-                    const last = prev[prev.length - 1]
-                    if (!last || last.role !== "assistant") return prev
-                    const arr = [...prev]
-                    arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens, ctxUsed }
-                    return arr
-                  })
-                }
-              }
-
-              const hasThinking = !!chunk.message?.thinking
-              const hasContent = !!chunk.message?.content
-              const toolCalls = chunk.message?.tool_calls ?? []
-
-              if (!hasThinking && !hasContent && toolCalls.length === 0) continue
-
-              if (firstChunk) {
-                setIsLoading(false)
-                firstChunk = false
-              }
-
-              // Appels de l'outil create_file : on ignore tout ce qui est mal formé
-              for (const call of toolCalls) {
-                const { filename, content } = call.function.arguments ?? {}
-                if (call.function.name !== "create_file" || typeof filename !== "string" || typeof content !== "string" || !filename.trim() || !content.trim()) continue
-                if (!hasAssistantMsgRef.current) {
-                  updateMessages(convId, prev => [...prev, { role: "assistant", content: "" }])
-                  hasAssistantMsgRef.current = true
-                }
-                updateConversation(convId, c => {
-                  const idx = c.messages.length - 1
-                  const already = c.messages[idx]?.files?.length ?? 0
-                  const file = makeFile(already === 0 && requestedName ? requestedName : filename, content, null, c.messages.flatMap(m => m.files ?? []))
-                  return { ...c, messages: c.messages.map((m, i) => (i === idx ? { ...m, files: [...(m.files ?? []), file] } : m)) }
-                })
-              }
-
-              if (hasThinking) {
-                thinkBufferRef.current += chunk.message!.thinking
-                setLiveThinking(thinkBufferRef.current)
-              }
-
-              if (hasThinking && !isThinkingRef.current) {
-                isThinkingRef.current = true
-                setIsThinking(true)
-              }
-
-              if (hasContent) {
-                rawBufferRef.current += chunk.message!.content
-                const raw = rawBufferRef.current
-
-                if (thinkOpenIdxRef.current === -1)
-                  thinkOpenIdxRef.current = raw.indexOf('<think>')
-                if (thinkOpenIdxRef.current !== -1 && thinkCloseIdxRef.current === -1)
-                  thinkCloseIdxRef.current = raw.indexOf('</think>')
-
-                const thinkOpenIdx = thinkOpenIdxRef.current
-                const thinkCloseIdx = thinkCloseIdxRef.current
-                const beforeThink = thinkOpenIdx > 0 ? raw.slice(0, thinkOpenIdx) : ''
-
-                let displayContent: string
-                let tagThinking: boolean
-
-                if (thinkOpenIdx === -1) {
-                  displayContent = raw
-                  tagThinking = false
-                } else if (thinkCloseIdx === -1) {
-                  displayContent = beforeThink
-                  tagThinking = true
-                } else {
-                  displayContent = beforeThink + raw.slice(thinkCloseIdx + '</think>'.length).trimStart()
-                  tagThinking = false
+            for (const line of lines) {
+              if (overthought) break
+              try {
+                const chunk = JSON.parse(line) as {
+                  message?: {
+                    content: string
+                    thinking?: string
+                    tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[]
+                  }
+                  error?: string
+                  done?: boolean
+                  eval_count?: number
+                prompt_eval_count?: number
+                  eval_duration?: number
                 }
 
-                if (!tagThinking && isThinkingRef.current) {
-                  isThinkingRef.current = false
-                  setIsThinking(false)
-                }
+                if (chunk.error) failure = chunk.error
 
-                if (displayContent.length > 0) {
-                  if (!hasAssistantMsgRef.current) {
-                    updateMessages(convId, prev => [...prev, { role: "assistant", content: displayContent }])
-                    hasAssistantMsgRef.current = true
-                  } else {
+                if (chunk.done) {
+                  // Valeurs réelles renvoyées par Ollama à la fin du stream.
+                  // On ne les garde que si elles sont présentes : jamais inventées.
+                  const tokens = chunk.eval_count
+                const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
+                  const sec = (chunk.eval_duration ?? 0) / 1e9
+                  if (tokens && tokens > 0 && sec > 0) {
                     updateMessages(convId, prev => {
-                      const updated = [...prev]
-                      updated[updated.length - 1] = { ...updated[updated.length - 1], content: displayContent }
-                      return updated
+                      const last = prev[prev.length - 1]
+                      if (!last || last.role !== "assistant") return prev
+                      const arr = [...prev]
+                      arr[arr.length - 1] = { ...last, tps: tokens / sec, duration: sec, tokens, ctxUsed }
+                      return arr
                     })
                   }
                 }
+
+                const hasThinking = !!chunk.message?.thinking
+                const hasContent = !!chunk.message?.content
+                const toolCalls = chunk.message?.tool_calls ?? []
+
+                if (!hasThinking && !hasContent && toolCalls.length === 0) continue
+
+                if (firstChunk) {
+                  setIsLoading(false)
+                  firstChunk = false
+                }
+
+                // Appels de l'outil create_file : on ignore tout ce qui est mal formé
+                for (const call of toolCalls) {
+                  const { filename, content } = call.function.arguments ?? {}
+                  if (call.function.name !== "create_file" || typeof filename !== "string" || typeof content !== "string" || !filename.trim() || !content.trim()) continue
+                  if (!hasAssistantMsgRef.current) {
+                    updateMessages(convId, prev => [...prev, { role: "assistant", content: "" }])
+                    hasAssistantMsgRef.current = true
+                  }
+                  updateConversation(convId, c => {
+                    const idx = c.messages.length - 1
+                    const already = c.messages[idx]?.files?.length ?? 0
+                    const file = makeFile(already === 0 && requestedName ? requestedName : filename, content, null, c.messages.flatMap(m => m.files ?? []))
+                    return { ...c, messages: c.messages.map((m, i) => (i === idx ? { ...m, files: [...(m.files ?? []), file] } : m)) }
+                  })
+                }
+
+                if (hasThinking) {
+                  thinkBufferRef.current += chunk.message!.thinking
+                  setLiveThinking(thinkBufferRef.current)
+                  // Un petit modèle peut réfléchir pendant des minutes sur une question simple : on coupe et on relance sans réflexion
+                  if (canOverthink && !rawBufferRef.current && thinkBufferRef.current.length > THINK_BUDGET_CHARS) {
+                    overthought = true
+                    attemptCtl.abort()
+                  }
+                }
+
+                if (hasThinking && !isThinkingRef.current) {
+                  isThinkingRef.current = true
+                  setIsThinking(true)
+                }
+
+                if (hasContent) {
+                  rawBufferRef.current += chunk.message!.content
+                  const raw = rawBufferRef.current
+
+                  if (thinkOpenIdxRef.current === -1)
+                    thinkOpenIdxRef.current = raw.indexOf('<think>')
+                  if (thinkOpenIdxRef.current !== -1 && thinkCloseIdxRef.current === -1)
+                    thinkCloseIdxRef.current = raw.indexOf('</think>')
+
+                  const thinkOpenIdx = thinkOpenIdxRef.current
+                  const thinkCloseIdx = thinkCloseIdxRef.current
+                  const beforeThink = thinkOpenIdx > 0 ? raw.slice(0, thinkOpenIdx) : ''
+
+                  let displayContent: string
+                  let tagThinking: boolean
+
+                  if (thinkOpenIdx === -1) {
+                    displayContent = raw
+                    tagThinking = false
+                  } else if (thinkCloseIdx === -1) {
+                    displayContent = beforeThink
+                    tagThinking = true
+                  } else {
+                    displayContent = beforeThink + raw.slice(thinkCloseIdx + '</think>'.length).trimStart()
+                    tagThinking = false
+                  }
+
+                  if (!tagThinking && isThinkingRef.current) {
+                    isThinkingRef.current = false
+                    setIsThinking(false)
+                  }
+
+                  if (displayContent.length > 0) {
+                    if (!hasAssistantMsgRef.current) {
+                      updateMessages(convId, prev => [...prev, { role: "assistant", content: displayContent }])
+                      hasAssistantMsgRef.current = true
+                    } else {
+                      updateMessages(convId, prev => {
+                        const updated = [...prev]
+                        updated[updated.length - 1] = { ...updated[updated.length - 1], content: displayContent }
+                        return updated
+                      })
+                    }
+                  }
+                }
+              } catch {
+                // ignore incomplete JSON chunks
               }
-            } catch {
-              // ignore incomplete JSON chunks
             }
           }
+        } catch (error) {
+          if (!overthought) throw error
+          retryMessage = "Réflexion trop longue, je réponds directement…"
+        } finally {
+          controller.signal.removeEventListener("abort", onUserAbort)
         }
 
         commitThinking(convId)
