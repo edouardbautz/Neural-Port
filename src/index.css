@@ -382,3 +382,56 @@ html.dark .np-prose tbody tr:hover {
 html.dark .np-prose hr {
   border-color: #27272a;
 }
+
+/* Curseur à paliers (StepSlider) : taille du curseur fixe pour aligner précisément graduations et libellés */
+.np-range {
+  --np-track: #e4e4e7;
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  outline: none;
+  cursor: pointer;
+  background: linear-gradient(to right, #6366f1 var(--fill), var(--np-track) var(--fill));
+}
+
+html.dark .np-range {
+  --np-track: #3f3f46;
+}
+
+.np-range:disabled {
+  cursor: not-allowed;
+}
+
+.np-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #6366f1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+}
+
+.np-range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #6366f1;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+}
+
+.np-range:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+}
+
+.np-range:focus-visible::-moz-range-thumb {
+  outline: 2px solid #818cf8;
+  outline-offset: 2px;
+}

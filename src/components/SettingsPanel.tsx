@@ -1,4 +1,5 @@
 import { XIcon } from "./icons"
+import StepSlider from "./StepSlider"
 import { ctxSteps, THINK_LEVELS, type ThinkLevel } from "../lib/context"
 
 function fmt(n: number): string {
@@ -47,19 +48,12 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, thinkLevel, thinkSuppor
             </span>
           </div>
 
-          <input
+          <StepSlider
             id="ctx"
-            type="range"
-            min={0}
-            max={steps.length - 1}
-            step={1}
-            value={index}
-            onChange={e => onChange(steps[Number(e.target.value)])}
-            className="w-full accent-indigo-500 cursor-pointer"
+            labels={steps.map(fmt)}
+            index={index}
+            onChange={i => onChange(steps[i])}
           />
-          <div className="flex justify-between text-[10px] text-zinc-400 dark:text-zinc-500 tabular-nums select-none">
-            {steps.map(s => <span key={s}>{fmt(s)}</span>)}
-          </div>
 
           <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
             C'est la mémoire de travail du modèle : ta question, l'historique, sa réflexion et sa réponse doivent tenir dedans.
@@ -74,20 +68,13 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, thinkLevel, thinkSuppor
             <span className="text-sm font-semibold text-indigo-500">{thinkInfo.label}</span>
           </div>
 
-          <input
+          <StepSlider
             id="think"
-            type="range"
-            min={0}
-            max={THINK_LEVELS.length - 1}
-            step={1}
-            value={thinkIndex}
+            labels={THINK_LEVELS.map(l => l.label)}
+            index={thinkIndex}
             disabled={thinkSupport === "none"}
-            onChange={e => onThinkChange(THINK_LEVELS[Number(e.target.value)].id)}
-            className="w-full accent-indigo-500 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            onChange={i => onThinkChange(THINK_LEVELS[i].id)}
           />
-          <div className="flex justify-between text-[10px] text-zinc-400 dark:text-zinc-500 select-none">
-            {THINK_LEVELS.map(l => <span key={l.id}>{l.label}</span>)}
-          </div>
 
           <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
             {thinkSupport === "none" ? "Ce modèle ne raisonne pas : ce réglage n'a pas d'effet." : thinkInfo.description}
