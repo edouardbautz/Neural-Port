@@ -1,7 +1,30 @@
 {
   "name": "neural-port",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Interface de chat locale pour vos modèles Ollama : rien ne quitte votre machine.",
+  "license": "MIT",
+  "author": "MeteoreLeVrai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edouardbautz/Neural-Port.git"
+  },
+  "bugs": {
+    "url": "https://github.com/edouardbautz/Neural-Port/issues"
+  },
+  "homepage": "https://github.com/edouardbautz/Neural-Port#readme",
+  "keywords": [
+    "ollama",
+    "llm",
+    "chat",
+    "local-first",
+    "react",
+    "vite",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
