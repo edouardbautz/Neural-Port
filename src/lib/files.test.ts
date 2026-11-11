@@ -29,6 +29,9 @@ describe("filenameFromRequest", () => {
     expect(filenameFromRequest("explique les langages, e.g. Python")).toBeNull()
     expect(filenameFromRequest("c'est-à-dire i.e. simplement")).toBeNull()
     expect(filenameFromRequest("un fichier foo.zzzz")).toBeNull()
+    expect(filenameFromRequest("Explique-moi comment marche Node.js")).toBeNull()
+    expect(isFileRequest("Différence entre Vue.js et React.js ?")).toBe(false)
+    expect(filenameFromRequest("crée jeu.js")).toBe("jeu.js")
   })
 })
 

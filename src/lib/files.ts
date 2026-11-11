@@ -81,10 +81,15 @@ export function extractCodeBlocks(markdown: string): CodeBlock[] {
 }
 
 // Nom de fichier cité dans une demande utilisateur (ex. « crée main.py »)
+// « Node.js », « Vue.js »… sont des noms de technologies, pas des fichiers
+const JS_FRAMEWORKS = new Set(["node", "next", "nuxt", "vue", "react", "express", "angular", "ember", "backbone", "d3", "three", "p5", "chart", "socket", "nest", "alpine", "knockout", "moment", "require", "handlebars", "mocha", "underscore", "lodash", "meteor", "svelte", "solid", "preact", "electron"])
+
 export function filenameFromRequest(text: string): string | null {
   const re = /(?:^|[\s`"'(])([\w-][\w./-]*\.([A-Za-z][A-Za-z0-9]{0,7}))(?=$|[\s`"'),.;:!?])/g
   for (const m of text.matchAll(re)) {
-    if (KNOWN_EXTENSIONS.has(m[2].toLowerCase())) return m[1]
+    if (!KNOWN_EXTENSIONS.has(m[2].toLowerCase())) continue
+    if (m[2].toLowerCase() === "js" && JS_FRAMEWORKS.has(m[1].slice(0, -3).toLowerCase())) continue
+    return m[1]
   }
   return null
 }
