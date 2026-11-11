@@ -34,6 +34,7 @@ Faire tourner un modèle en local, c'est la garantie que vos conversations ne qu
 | **Édition** | Modifier un message, régénérer une réponse. |
 | **Sauvegarde** | Export et import JSON de vos conversations ; un historique partiellement corrompu est réparé plutôt que rejeté. |
 | **Connexion** | Bannière explicative et reconnexion automatique si Ollama ne répond pas ; adresse du serveur réglable. |
+| **Prompts évalués** | Les consignes envoyées au modèle (prompt système, outil de fichiers, résumé des longues conversations) ont été choisies par mesure : un banc de 61 cas, des correcteurs testés, des intervalles de confiance et des cas mis de côté. Sur le modèle de test à température 0,2 : **65 % → 88 %** de réussite (58 % → 67 % à la température par défaut du modèle : la température compte autant que le prompt). Méthode, découvertes et limites : [docs/prompt-engineering.md](docs/prompt-engineering.md). |
 
 **Raccourcis** : `Ctrl+K` nouvelle conversation · `Ctrl+,` paramètres · `Échap` arrêter la génération · `Entrée` envoyer (`Maj+Entrée` pour un retour à la ligne).
 
@@ -84,6 +85,7 @@ npm run dev       # serveur de développement (Vite)
 npm run lint      # ESLint
 npm test          # tests unitaires (Vitest)
 npm run build     # vérification TypeScript + build de production
+npm run eval:prompts   # évaluation des prompts avec votre modèle Ollama (voir docs/prompt-engineering.md)
 ```
 
 Stack : React 19, TypeScript, Vite, Tailwind CSS 4, react-markdown, Vitest. Le rendu Markdown et la coloration syntaxique sont chargés à part, pour un premier affichage rapide.
@@ -93,7 +95,8 @@ src/
 ├── App.tsx            assemblage de l'interface et orchestration d'une réponse
 ├── components/        interface (messages, barre latérale, paramètres, fichiers…)
 ├── hooks/             état persistant et connexion à Ollama (useHistory, useOllamaConnection)
-└── lib/               logique pure et testée (flux Ollama, compaction, fichiers, historique, Markdown…)
+├── lib/               logique pure et testée (flux Ollama, prompts, compaction, fichiers, historique, Markdown…)
+└── eval/              banc d'évaluation des prompts (cas, correcteurs, statistiques)
 ```
 
 ## Contribuer

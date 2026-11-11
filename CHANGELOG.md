@@ -5,6 +5,12 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+### Prompts
+- Prompt système (4 lignes, ~86 tokens) choisi par évaluation (température 0,2) : **65 % → 88 %** de réussite sur 46 cas, **67 % → 93 %** sur 15 cas mis de côté ; 58 % → 67 % à la température par défaut du modèle. Il fixe la langue de réponse, la concision, l'aveu d'ignorance et le format du code, et donne la date et le nom du modèle.
+- La date (sans l'heure) garde le prompt identique toute la journée : le cache de préfixe d'Ollama est conservé (conversation longue retraitée 4× plus vite).
+- Compaction : consignes et étiquettes de rôle dans la langue de la conversation (résumé dans la bonne langue : 80 % → 100 %).
+- Banc d'évaluation reproductible (`npm run eval:prompts`) et rapport méthodologique : [docs/prompt-engineering.md](docs/prompt-engineering.md).
+
 ### Performance
 - Streaming fluide même dans une longue conversation : le Markdown n'est plus ré-analysé en entier à chaque fragment (rendu mémoïsé, mises à jour de l'affichage regroupées). Mesuré sur 60 messages riches en Markdown : **84 ms → 1,4 ms de calcul par fragment**, et plus aucune tâche bloquante.
 - Premier chargement allégé : le rendu Markdown et la coloration syntaxique sont chargés à part (script principal **616 → 298 kB**, 190 → 92 kB compressé).

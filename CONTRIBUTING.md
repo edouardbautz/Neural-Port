@@ -34,6 +34,7 @@ npm run build
 Quelques repères :
 
 - **Tests** : toute logique ajoutée dans `src/lib/` ou `src/hooks/` doit être couverte par un test Vitest (`*.test.ts` à côté du fichier ; `// @vitest-environment jsdom` en tête pour les hooks). Un bug corrigé doit idéalement venir avec un test qui l'aurait détecté.
+- **Prompts** : ne modifiez pas un prompt à l'intuition. Ajoutez la variante à `src/eval/variants.ts`, comparez-la à `production` avec `npm run eval:prompts` (voir [docs/prompt-engineering.md](docs/prompt-engineering.md)) et joignez les résultats à la PR.
 - **Interface** : testez dans un vrai navigateur, avec Ollama lancé, clair et sombre. Vérifiez aussi les états d'erreur (Ollama éteint, aucun modèle), le pilotage au clavier et un écran de téléphone (mode appareil de Chrome).
 - **Langue** : l'interface et les commentaires sont en français ; les noms de variables et de fonctions en anglais.
 - **Dépendances** : évitez d'en ajouter sans raison solide ; l'application doit rester légère.
