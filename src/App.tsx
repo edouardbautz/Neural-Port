@@ -6,6 +6,7 @@ import FilesPanel from './components/FilesPanel'
 import SettingsPanel from './components/SettingsPanel'
 import CompactionDivider from './components/CompactionDivider'
 import { ctxSteps, isThinkLevel, THINK_LEVELS, type ThinkLevel } from './lib/context'
+import { DEFAULT_TEMPERATURE_LEVEL, isTemperatureLevel, temperatureValue, type TemperatureLevel } from './lib/temperature'
 import { repairFences } from './lib/markdown'
 import {
   compactConversation,
@@ -59,6 +60,7 @@ export interface Conversation {
 const CTX_KEY = "neural-port-ctx"
 const MODEL_KEY = "neural-port-model"
 const THINK_KEY = "neural-port-think"
+const TEMPERATURE_KEY = "neural-port-temperature"
 const COMPACT_KEY = "neural-port-compaction"
 const DEFAULT_CTX = 16384
 const STREAM_FLUSH_MS = 50
@@ -163,6 +165,15 @@ function App() {
       // ignore
     }
     return "medium"
+  })
+  const [temperatureLevel, setTemperatureLevel] = useState<TemperatureLevel>(() => {
+    try {
+      const saved = localStorage.getItem(TEMPERATURE_KEY)
+      if (isTemperatureLevel(saved)) return saved
+    } catch {
+      // ignore
+    }
+    return DEFAULT_TEMPERATURE_LEVEL
   })
   const [thinkSupport, setThinkSupport] = useState<"none" | "toggle" | "levels">("toggle")
   const [compaction, setCompaction] = useState<CompactionSettings>(() => {
@@ -271,6 +282,14 @@ function App() {
 
   useEffect(() => {
     try {
+      localStorage.setItem(TEMPERATURE_KEY, temperatureLevel)
+    } catch {
+      // ignore
+    }
+  }, [temperatureLevel])
+
+  useEffect(() => {
+    try {
       localStorage.setItem(CTX_KEY, String(numCtx))
     } catch {
       // ignore
@@ -359,6 +378,11 @@ function App() {
 
   // Renvoie le curseur dans l'input dès qu'il est utilisable :
   // à l'arrivée sur la page, au choix d'un modèle, et à la fin de chaque réponse
+  // Fermeture des Paramètres : on reprend la saisie là où on l'avait laissée
+  useEffect(() => {
+    if (!settingsOpen && activeModel && historyReady) textareaRef.current?.focus()
+  }, [settingsOpen, activeModel, historyReady])
+
   useEffect(() => {
     if (!isLoading && !isStreaming && activeModel && historyReady) {
       textareaRef.current?.focus()
@@ -755,7 +779,7 @@ function App() {
               model: activeModel,
               messages: systemContent ? [{ role: "system", content: systemContent }, ...history] : history,
               ...(useTools ? { tools: [CREATE_FILE_TOOL] } : {}),
-              options: { num_ctx: effectiveCtx },
+              options: { num_ctx: effectiveCtx, temperature: temperatureValue(temperatureLevel) },
               // `think` n'est accepté que par les modèles qui savent raisonner
               ...(info.thinking
                 ? attempt > 0 || thinkLevel === "off"
@@ -1251,6 +1275,8 @@ function App() {
           thinkLevel={thinkLevel}
           thinkSupport={thinkSupport}
           onThinkChange={setThinkLevel}
+          temperatureLevel={temperatureLevel}
+          onTemperatureChange={setTemperatureLevel}
           ollamaUrl={ollamaUrl}
           defaultOllamaUrl={DEFAULT_OLLAMA_URL}
           connection={connection}

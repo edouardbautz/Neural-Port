@@ -4,6 +4,7 @@ import { normalizeOllamaUrl } from "../lib/ollama"
 import StepSlider from "./StepSlider"
 import { THRESHOLDS, type CompactionSettings, type ConversationSummary } from "../lib/compaction"
 import { ctxSteps, THINK_LEVELS, type ThinkLevel } from "../lib/context"
+import { TEMPERATURE_LEVELS, type TemperatureLevel } from "../lib/temperature"
 
 function fmt(n: number): string {
   return n >= 1024 ? `${n / 1024}k` : String(n)
@@ -26,6 +27,8 @@ interface SettingsPanelProps {
   thinkLevel: ThinkLevel
   thinkSupport: "none" | "toggle" | "levels"  // ce que le modèle sait faire
   onThinkChange: (value: ThinkLevel) => void
+  temperatureLevel: TemperatureLevel
+  onTemperatureChange: (value: TemperatureLevel) => void
   ollamaUrl: string
   defaultOllamaUrl: string
   connection: "checking" | "ok" | "down"
@@ -36,7 +39,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, ollamaUrl, defaultOllamaUrl, connection, onOllamaUrlChange, conversationCount, onExport, onImport, onClose }: SettingsPanelProps) {
+function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, temperatureLevel, onTemperatureChange, ollamaUrl, defaultOllamaUrl, connection, onOllamaUrlChange, conversationCount, onExport, onImport, onClose }: SettingsPanelProps) {
   const [urlDraft, setUrlDraft] = useState(ollamaUrl)
   const [urlError, setUrlError] = useState<string | null>(null)
   const [importStatus, setImportStatus] = useState<{ ok: boolean; message: string } | null>(null)
@@ -78,6 +81,8 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactio
   const current = steps[index]
   const thinkIndex = THINK_LEVELS.findIndex(l => l.id === thinkLevel)
   const thinkInfo = THINK_LEVELS[thinkIndex]
+  const temperatureIndex = Math.max(0, TEMPERATURE_LEVELS.findIndex(l => l.id === temperatureLevel))
+  const temperatureInfo = TEMPERATURE_LEVELS[temperatureIndex]
   const usedPct = used != null ? Math.min(100, (used / current) * 100) : null
 
   return (
@@ -140,6 +145,24 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactio
               réflexion au-delà de la durée prévue puis demande une réponse directe.
             </p>
           )}
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor="temperature" className="text-sm font-medium">Température</label>
+            <span className="text-sm font-semibold text-indigo-600 dark:text-indigo-400">
+              {temperatureInfo.label} <span className="font-normal text-zinc-600 dark:text-zinc-400">({temperatureInfo.value.toLocaleString("fr-FR")})</span>
+            </span>
+          </div>
+
+          <StepSlider
+            id="temperature"
+            labels={TEMPERATURE_LEVELS.map(l => l.label)}
+            index={temperatureIndex}
+            onChange={i => onTemperatureChange(TEMPERATURE_LEVELS[i].id)}
+          />
+
+          <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{temperatureInfo.description}</p>
         </div>
 
         <div className="flex flex-col gap-3">

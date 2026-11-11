@@ -9,7 +9,8 @@ est appuyé par une expérience reproductible (`npm run eval:prompts`), pas par 
 |---|---|---|
 | 46 cas de conception, température 0,2 | 65 % [57–73] | **88 % [82–93]** |
 | 15 cas mis de côté (jamais vus pendant la conception), température 0,2 | 67 % [52–79] | **93 % [82–98]** |
-| 46 cas, **température par défaut du modèle (1,0)** — le réglage actuel de l'application | 58 % [50–66] | 67 % [58–74] |
+| 46 cas, température 0,4 — **le réglage par défaut de l'application** | 58 % [50–66] *(avant : température 1,0 du modèle)* | **86 % [79–91]** |
+| 46 cas, température 1,0 (défaut du modèle) | 58 % [50–66] | 67 % [58–74] |
 | Résumés de compaction réussis (langue, faits, pas d'invention) | 52 % [33–70] | **64 % [45–80]** |
 | Prompt système | aucun (sauf une phrase sur l'outil) | 4 lignes, ~86 tokens |
 
@@ -17,7 +18,7 @@ Intervalles de confiance à 95 % (méthode de Wilson). Modèle évalué : `qwen3
 [Limites](#limites-et-honnêteté-sur-la-méthode).
 
 **À retenir** : le prompt apporte un gain net et significatif à température basse, mais **la température compte autant que
-le prompt** (section 8) : au réglage par défaut du modèle, qui est très aléatoire (1,0), le gain est réduit et non significatif.
+le prompt** (section 8) : au réglage par défaut du modèle, qui est très aléatoire (1,0), le gain est réduit et non significatif ; c'est pourquoi l'application propose un réglage de température, à 0,4 par défaut.
 
 ## Ce qui est envoyé au modèle
 
@@ -161,9 +162,10 @@ Même prompt (`production`), mêmes 46 cas, seule la température change :
 | 0,7 | 75 % [68–82] |
 | 1,0 (défaut du modèle, réglage actuel) | 67 % [58–74] |
 
-Passer de 0,4 à 1,0 coûte **près de 20 points**, plus que ce que le prompt rapporte. Un assistant factuel local gagnerait à
-exposer ce réglage (par exemple « Précis / Équilibré / Créatif ») avec une valeur par défaut basse. Ce n'est **pas** encore
-fait : c'est un changement de comportement visible, à décider séparément.
+Passer de 0,4 à 1,0 coûte **près de 20 points**, plus que ce que le prompt rapporte. L'application expose donc ce réglage
+(**Paramètres → Température** : Précis 0,2 · Équilibré 0,4 · Souple 0,7 · Créatif 1,0) avec **Équilibré** par défaut :
+presque aussi fiable que « Précis » (86 % contre 88 %), avec un peu de variété. Pour l'écriture ou le brainstorming, on peut
+repasser en « Créatif ». La valeur est envoyée à Ollama à chaque message (`options.temperature`).
 
 ## Résultats finaux (température 0,2)
 
@@ -194,7 +196,7 @@ visible. Coût du prompt : **~86 tokens**, soit environ 0,5 % d'une fenêtre de 
 - **Réflexion désactivée.** Les rondes ont été faites avec `think: false`. Avec la réflexion activée (réglage par défaut de
   l'application), ce modèle épuise souvent son budget en réfléchissant ; l'application coupe alors la réflexion et relance
   sans réflexion, c'est-à-dire exactement le chemin évalué ici. La variante avec réflexion n'a pas été évaluée à grande échelle.
-- **Les chiffres principaux sont à température 0,2**, pas au réglage actuel de l'application (1,0) : voir la section 8.
+- **Les chiffres principaux sont à température 0,2** ; au réglage par défaut du modèle (1,0), le gain du prompt est plus faible (section 8). L'application utilise désormais 0,4 par défaut (86 % mesuré).
 - **Peu d'essais.** 3 par cas : les intervalles sont larges, et seules les différences d'au moins ~15 points sont
   significatives. Plusieurs écarts entre candidats (par exemple 87 % contre 88 %) ne sont **pas** significatifs, d'où le
   choix de la variante la plus simple et la moins chère.

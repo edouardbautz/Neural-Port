@@ -5,6 +5,10 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+### Température
+- Nouveau réglage **Paramètres → Température** (Précis 0,2 · Équilibré 0,4 · Souple 0,7 · Créatif 1,0), « Équilibré » par défaut. Mesuré sur le banc d'évaluation : 86 % de réussite à 0,4 contre 67 % à 1,0, le réglage par défaut du modèle utilisé jusqu'ici.
+- Fermer les Paramètres rend le focus au champ de saisie.
+
 ### Prompts
 - Prompt système (4 lignes, ~86 tokens) choisi par évaluation (température 0,2) : **65 % → 88 %** de réussite sur 46 cas, **67 % → 93 %** sur 15 cas mis de côté ; 58 % → 67 % à la température par défaut du modèle. Il fixe la langue de réponse, la concision, l'aveu d'ignorance et le format du code, et donne la date et le nom du modèle.
 - La date (sans l'heure) garde le prompt identique toute la journée : le cache de préfixe d'Ollama est conservé (conversation longue retraitée 4× plus vite).
