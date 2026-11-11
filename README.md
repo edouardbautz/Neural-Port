@@ -1,101 +1,104 @@
+<div align="center">
+
 # Neural-Port
 
-Neural-Port est une interface de chat conçue pour discuter avec vos modèles Ollama. Tout fonctionne en local, rien ne quitte votre machine.
+**Une interface de chat soignée pour vos modèles [Ollama](https://ollama.com). Tout reste sur votre machine.**
 
-L'idée est simple : profiter d'une interface soignée sans sacrifier la confidentialité.
+[![CI](https://github.com/edouardbautz/Neural-Port/actions/workflows/ci.yml/badge.svg)](https://github.com/edouardbautz/Neural-Port/actions/workflows/ci.yml)
+[![Licence MIT](https://img.shields.io/badge/licence-MIT-6366f1.svg)](LICENSE)
+[![Node 20.19+](https://img.shields.io/badge/node-%E2%89%A5%2020.19-339933.svg)](https://nodejs.org)
+
+![Capture d'écran de Neural-Port](docs/screenshot.jpg)
+
+</div>
+
+## Pourquoi Neural-Port
+
+Faire tourner un modèle en local, c'est la garantie que vos conversations ne quittent pas votre machine. Neural-Port y ajoute le confort qu'on attend d'un assistant moderne : historique, Markdown, fichiers générés, thème sombre, et une gestion de la mémoire du modèle qui évite qu'une longue conversation ne s'effondre.
+
+- **Local et privé** : aucun compte, aucune télémétrie, aucun service tiers. Les conversations sont stockées dans votre navigateur.
+- **Léger** : une application web statique, sans serveur à part Ollama.
+- **Robuste** : Ollama éteint, modèle absent, stockage plein, historique abîmé… chaque cas est géré et expliqué à l'écran.
 
 ## Fonctionnalités
 
-**Historique des conversations**
+| | |
+|---|---|
+| **Conversations** | Historique dans une barre latérale, nommage automatique, renommage (double-clic), recherche dans les titres et les messages. |
+| **Streaming** | Le texte s'affiche au fil de la génération ; arrêt à tout moment (`Échap`). Statut précis : chargement du modèle, traitement du contexte, réflexion. |
+| **Modèles** | Tous vos modèles Ollama dans un menu, rechargé à chaque ouverture. Les modèles de raisonnement (DeepSeek-R1, QwQ, GPT-OSS…) affichent leur réflexion dans un bloc repliable. |
+| **Markdown** | Tableaux, listes, citations, code avec coloration syntaxique (thèmes clair et sombre), copie en un clic. |
+| **Fichiers générés** | Demandez « écris-moi `jeu.py` » : le fichier apparaît dans un panneau avec aperçu et téléchargement. Un bloc de code devient un fichier d'un clic. |
+| **Fenêtre de contexte** | Taille réglable avec une jauge d'utilisation et le niveau de réflexion (Off / Low / Medium / High). |
+| **Compaction automatique** | Quand la conversation approche de la limite du contexte, les anciens messages sont résumés par le modèle ; vos messages d'origine restent affichés et conservés. |
+| **Édition** | Modifier un message, régénérer une réponse. |
+| **Sauvegarde** | Export et import JSON de vos conversations ; un historique partiellement corrompu est réparé plutôt que rejeté. |
+| **Connexion** | Bannière explicative et reconnexion automatique si Ollama ne répond pas ; adresse du serveur réglable. |
 
-Comme ChatGPT ou Claude, toutes vos conversations sont conservées dans une barre latérale. Chaque conversation est nommée automatiquement d'après votre premier message et mémorisée dans le navigateur : fermez la page, rouvrez-la, tout est là. Créez-en de nouvelles en un clic, revenez sur une ancienne, supprimez celles qui ne servent plus.
+**Raccourcis** : `Ctrl+K` nouvelle conversation · `Ctrl+,` paramètres · `Échap` arrêter la génération · `Entrée` envoyer (`Maj+Entrée` pour un retour à la ligne).
 
-**Statut de génération en temps réel**
+## Démarrage rapide
 
-Quand vous patientez après avoir envoyé un message, l'interface vous indique précisément ce qui se passe. Si le modèle n'était pas en mémoire, vous voyez qu'il charge, puis qu'il traite votre contexte une fois prêt. Pour les modèles de raisonnement comme DeepSeek-R1 ou QwQ, une étape "Réflexion en cours" s'affiche pendant la phase de pensée, détectée directement dans le flux de l'API Ollama.
-
-**Sélection de modèles automatique**
-
-Tous vos modèles installés dans Ollama apparaissent dans le menu de sélection. Ajoutez-en un nouveau pendant que l'application tourne, il sera disponible au prochain clic.
-
-**Rendu Markdown soigné**
-
-Les réponses sont affichées en Markdown : tableaux stylés, citations, listes, liens, code inline et blocs de code avec en-tête (langue détectée), bouton de copie et coloration syntaxique qui s'adapte au thème clair ou sombre. Un bouton de copie est également disponible sur chaque bulle de réponse.
-
-**Streaming et mode sombre**
-
-Le texte s'affiche au fil de la génération. Un bouton en haut à droite bascule entre le thème clair et le thème sombre.
-
-**Fichiers générés**
-
-Demandez un fichier (« écris-moi `jeu.py` ») : le modèle le crée via l'outil `create_file` (ou, à défaut, le code est converti en fichier). Les fichiers apparaissent dans un panneau latéral, avec aperçu et téléchargement. Un bloc de code peut aussi être transformé en fichier d'un clic.
-
-**Réflexion et fenêtre de contexte**
-
-Le niveau de réflexion (Off / Low / Medium / High) et la taille de la fenêtre de contexte se règlent dans le panneau Paramètres (`Ctrl+,`), avec une jauge d'utilisation du contexte.
-
-**Compaction automatique**
-
-Quand la conversation approche de la limite de la fenêtre de contexte, les anciens messages sont résumés par le modèle et le résumé les remplace dans la requête. Vos messages restent affichés et conservés. Le seuil est réglable, et la compaction peut être lancée à la main.
-
-**Sauvegarde et import**
-
-Les conversations vivent dans le navigateur. Le panneau Paramètres permet de les exporter dans un fichier JSON et de les réimporter (sur un autre navigateur ou après un nettoyage). Un fichier partiellement corrompu est réparé plutôt que rejeté, et si le stockage du navigateur est plein, un bandeau vous prévient pour que vous puissiez exporter avant de perdre quoi que ce soit.
-
-**Connexion à Ollama**
-
-Si Ollama ne répond pas, l'interface l'indique avec la marche à suivre, réessaie toute seule et se rétablit dès qu'il revient. Si aucun modèle n'est installé, elle affiche la commande à lancer. L'adresse d'Ollama se règle dans les Paramètres.
-
-**Édition et raccourcis**
-
-Modifier un message, régénérer une réponse, renommer une conversation (double-clic), rechercher dans l'historique. `Ctrl+K` : nouvelle conversation · `Échap` : arrêter la génération.
-
-## Prérequis
-
-- Node.js v20.19+ (requis par Vite 7)
-- [Ollama](https://ollama.com) installé et lancé
-
-## Installation
+**Prérequis** : [Node.js](https://nodejs.org) 20.19 ou plus, et [Ollama](https://ollama.com) lancé avec au moins un modèle.
 
 ```bash
-git clone https://github.com/meteorelevrai/Neural-Port.git
+ollama pull llama3.2:3b      # si vous n'avez encore aucun modèle
+
+git clone https://github.com/edouardbautz/Neural-Port.git
 cd Neural-Port
 npm install
 npm run dev
 ```
 
-Accessible sur `http://localhost:5173`.
+Ouvrez <http://localhost:5173>.
 
-## Développement
+Pour un déploiement statique, `npm run build` produit le dossier `dist/`, à servir avec n'importe quel serveur web (`npm run preview` pour l'essayer).
 
-```bash
-npm run lint    # ESLint
-npm test        # tests unitaires (Vitest)
-npm run build   # vérification TypeScript + build de production
-```
+## Configuration
 
-## Ollama sur une autre adresse
+### Ollama sur une autre adresse
 
-Par défaut, Neural-Port contacte `http://localhost:11434`. Si vous ouvrez l'application depuis une autre adresse (réseau local, Docker, autre machine), ou si Ollama refuse la connexion (erreur CORS), autorisez l'origine de l'application au démarrage d'Ollama :
+Par défaut, Neural-Port contacte `http://localhost:11434`. L'adresse se règle dans **Paramètres → Adresse d'Ollama**.
+
+Si vous ouvrez l'application depuis une autre adresse (réseau local, Docker, autre machine), ou si Ollama refuse la connexion (erreur CORS), autorisez l'origine de l'application au démarrage d'Ollama :
 
 ```bash
 OLLAMA_ORIGINS="http://localhost:5173" ollama serve
 ```
 
-Remplacez l'origine par l'adresse réelle de l'application (ou `*` pour tout autoriser, à éviter hors de votre réseau). Si Ollama tourne sur une autre machine, ajoutez `OLLAMA_HOST=0.0.0.0`, puis saisissez son adresse dans Paramètres → Adresse d'Ollama. Une application servie en `https://` ne peut pas joindre un Ollama en `http://` (blocage du navigateur) : servez-la en `http://`.
+Remplacez l'origine par l'adresse réelle de l'application (ou `*` pour tout autoriser, à éviter hors de votre réseau). Si Ollama tourne sur une autre machine, ajoutez `OLLAMA_HOST=0.0.0.0` puis saisissez son adresse dans les Paramètres.
 
-## Ajouter des modèles
+> [!WARNING]
+> Ollama n'a pas d'authentification : ne l'exposez pas sur Internet. Une application servie en `https://` ne peut pas joindre un Ollama en `http://` (blocage du navigateur).
 
-Neural-Port détecte automatiquement les modèles disponibles. Pour en installer depuis Ollama :
+### Vos données
+
+Les conversations et les réglages sont conservés dans le `localStorage` de votre navigateur, en clair. Utilisez **Paramètres → Données** pour les exporter, les sauvegarder ou les transférer vers un autre navigateur. Si le stockage du navigateur est plein, un bandeau vous prévient pour que vous puissiez exporter avant de perdre quoi que ce soit.
+
+## Développement
 
 ```bash
-ollama pull llama3.2:3b
-ollama pull mistral:7b
-ollama pull deepseek-r1:8b   # pour tester le raisonnement
+npm run dev       # serveur de développement (Vite)
+npm run lint      # ESLint
+npm test          # tests unitaires (Vitest)
+npm run build     # vérification TypeScript + build de production
 ```
+
+Stack : React 19, TypeScript, Vite, Tailwind CSS 4, react-markdown, Vitest.
+
+```
+src/
+├── App.tsx            état de l'application, communication avec Ollama
+├── components/        interface (messages, barre latérale, paramètres, fichiers…)
+└── lib/               logique pure et testée (compaction, fichiers, historique, Markdown…)
+```
+
+## Contribuer
+
+Les contributions sont les bienvenues ! Lisez [CONTRIBUTING.md](CONTRIBUTING.md) pour la mise en route, les conventions et la liste de vérification des pull requests. Pour signaler une faille, voir [SECURITY.md](SECURITY.md). Le projet suit un [code de conduite](CODE_OF_CONDUCT.md).
+
+L'historique des versions est dans le [CHANGELOG](CHANGELOG.md).
 
 ## Licence
 
-**Copyright © 2026 MeteoreLeVrai. Tous droits réservés.**
-
-Usage personnel et privé autorisé. Toute redistribution ou usage commercial est interdit sans accord écrit de l'auteur.
+Distribué sous [licence MIT](LICENSE). Copyright © 2026 MeteoreLeVrai.
