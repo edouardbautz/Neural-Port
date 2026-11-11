@@ -12,7 +12,7 @@ En participant, vous acceptez de respecter le [code de conduite](CODE_OF_CONDUCT
 
 ## Mettre en place l'environnement
 
-Prérequis : Node.js 20.19+ et [Ollama](https://ollama.com) avec au moins un petit modèle (`ollama pull llama3.2:3b`).
+Prérequis : Node.js 20.19+ (ou 22.12+) et [Ollama](https://ollama.com) avec au moins un petit modèle (`ollama pull llama3.2:3b`).
 
 ```bash
 git clone https://github.com/edouardbautz/Neural-Port.git
