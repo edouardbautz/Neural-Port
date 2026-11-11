@@ -111,9 +111,19 @@ html.dark .np-prose {
 }
 
 /* --- Blocs de code : coloration syntaxique --- */
+/* Le fond est porté par le <pre> : sur le <code> (élément en ligne) il dessinerait un rectangle par ligne de texte */
+.np-prose pre {
+  background-color: var(--np-c-code-bg);
+}
+
+.np-prose pre code.hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+}
+
 .np-prose .hljs {
   color: var(--np-c-base);
-  background-color: var(--np-c-code-bg);
 }
 
 .np-prose .hljs-doctag,
@@ -214,6 +224,12 @@ html.dark .np-prose {
   border-radius: 0.375rem;
   background-color: rgba(99, 102, 241, 0.09);
   color: #4f46e5;
+}
+
+/* Le plugin typography entoure le code en ligne de backticks : inutile avec un fond coloré */
+.np-prose :not(pre) > code::before,
+.np-prose :not(pre) > code::after {
+  content: none;
 }
 
 html.dark .np-prose :not(pre) > code {
