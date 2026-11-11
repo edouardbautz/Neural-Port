@@ -1,3 +1,4 @@
+import { words } from "../lib/language"
 import { countBullets, countSentences, dateForms, fenceReport, hasValidTable, hedges, includesAll, includesAny, languageMatches } from "./graders"
 import type { EvalCase, EvalEnv, Reply } from "./types"
 
@@ -380,6 +381,62 @@ export const HELD_OUT_CASES: EvalCase[] = [
     grade: r => ({ "n'appelle pas create_file": oneFileCall(r).length === 0, "répond à la question": r.content.trim().length >= 40 }),
     good: { content: "Your user probably lacks the required permission on that file; check it with ls -l and change it with chmod or by running the command as the owner." },
     bad: { content: "Done.", toolCalls: [call("create_file", { filename: "fix.sh", content: "chmod 777 file" })] }
+  }
+]
+
+// ---------------------------------------------------------------------------------------------------------------
+// Instructions personnalisées : le modèle les suit-il, y compris quand elles contredisent les règles générales ?
+// ---------------------------------------------------------------------------------------------------------------
+const lastLine = (text: string) => text.trim().split("\n").filter(l => l.trim()).at(-1)?.trim() ?? ""
+
+export const CUSTOM_CASES: EvalCase[] = [
+  {
+    id: "perso-langue", category: "personnalisation", lang: "fr", tools: false, custom: "Always answer in English, whatever the language of the question.",
+    messages: user("Quelle est la capitale de l'Italie ?"),
+    grade: r => ({ "répond en anglais": languageMatches(r.content, "en"), "réponse juste": includesAny(r.content, ["rome"]) }),
+    good: { content: "The capital of Italy is Rome." }, bad: { content: "La capitale de l'Italie est Rome." }
+  },
+  {
+    id: "perso-tutoiement", category: "personnalisation", lang: "fr", tools: false, custom: "Tutoie toujours l'utilisateur.",
+    messages: user("Donne-moi trois conseils pour apprendre à programmer."),
+    grade: r => ({ "tutoie": /\b(tu|te|ton|ta|tes|toi)\b|\bt'/i.test(r.content), "ne vouvoie pas": !/\bvous\b/i.test(r.content) }),
+    good: { content: "1. Commence par un petit projet que tu aimes.\n2. Pratique un peu chaque jour.\n3. Lis le code des autres pour t'en inspirer." },
+    bad: { content: "1. Commencez par un petit projet que vous aimez.\n2. Pratiquez un peu chaque jour.\n3. Lisez le code des autres." }
+  },
+  {
+    id: "perso-prenom", category: "personnalisation", lang: "en", tools: false, custom: "The user's name is Alex. Address them by name in the first sentence.",
+    messages: user("How do I reverse a list in Python?"),
+    grade: r => ({ "prénom dans le début": r.content.slice(0, 120).includes("Alex") }),
+    good: { content: "Alex, you can reverse a list with my_list.reverse() or my_list[::-1]." },
+    bad: { content: "You can reverse a list with my_list.reverse() or my_list[::-1]." }
+  },
+  {
+    id: "perso-signature", category: "personnalisation", lang: "fr", tools: false, custom: "Termine chaque réponse par la ligne exacte : -- Fin",
+    messages: user("Donne-moi un conseil pour mieux dormir."),
+    grade: r => ({ "dernière ligne exacte": lastLine(r.content) === "-- Fin" }),
+    good: { content: "Évite les écrans une heure avant de te coucher.\n-- Fin" },
+    bad: { content: "Évite les écrans une heure avant de te coucher." }
+  },
+  {
+    id: "perso-longueur", category: "personnalisation", lang: "fr", tools: false, custom: "Réponds en 20 mots maximum.",
+    messages: user("Explique le fonctionnement d'un moteur à explosion."),
+    grade: r => ({ "25 mots au plus": words(r.content).length <= 25, "non vide": r.content.trim().length > 0 }),
+    good: { content: "Un mélange d'air et de carburant explose dans un cylindre, poussant un piston qui fait tourner le vilebrequin." },
+    bad: { content: "Un moteur à explosion fonctionne en quatre temps : admission, compression, explosion, échappement. Pendant l'admission, le piston descend et aspire un mélange d'air et de carburant dans le cylindre, puis il remonte pour le comprimer." }
+  },
+  {
+    id: "perso-python", category: "personnalisation", lang: "fr", tools: false, custom: "Je suis développeur Python débutant. Donne toujours des exemples en Python.",
+    messages: user("Comment parcourir une liste ?"),
+    grade: r => { const f = fenceReport(r.content); return { "exemple de code": f.blocks >= 1, "bloc refermé": !f.unclosed, "en Python": f.languages.some(l => l === "python" || l === "py") } },
+    good: { content: "Avec une boucle for :\n```python\nfor x in ma_liste:\n    print(x)\n```" },
+    bad: { content: "Avec une boucle for :\n```javascript\nfor (const x of maListe) console.log(x)\n```" }
+  },
+  {
+    id: "perso-conflit", category: "personnalisation", lang: "en", tools: false, custom: "Be very detailed and thorough: explain step by step, with several paragraphs.",
+    messages: user("What is a CPU?"),
+    grade: r => ({ "réponse détaillée (≥ 400 caractères)": r.content.length >= 400 }),
+    good: { content: "A CPU, or central processing unit, is the main chip of a computer. ".repeat(8) },
+    bad: { content: "A CPU is the processor of a computer." }
   }
 ]
 

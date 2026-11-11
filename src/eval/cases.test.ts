@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { CASES, EVAL_MODEL, EVAL_NOW, HELD_OUT_CASES, makeReply } from "./cases"
+import { CASES, EVAL_MODEL, EVAL_NOW, CUSTOM_CASES, HELD_OUT_CASES, makeReply } from "./cases"
 
 // « Évaluer l'évaluation » : un correcteur qui ne distingue pas une bonne d'une mauvaise réponse ne mesure rien.
 const env = { now: EVAL_NOW, model: EVAL_MODEL }
@@ -21,7 +21,7 @@ describe("jeu de cas d'évaluation", () => {
     expect(HELD_OUT_CASES.every(c => !questions.has(c.messages[0].content))).toBe(true)
   })
 
-  for (const c of [...CASES, ...HELD_OUT_CASES]) {
+  for (const c of [...CASES, ...HELD_OUT_CASES, ...CUSTOM_CASES]) {
     it(`${c.id} : accepte la bonne réponse et refuse la mauvaise`, () => {
       expect(passes(c.grade(makeReply(c.good), env))).toBe(true)
       expect(passes(c.grade(makeReply(c.bad), env))).toBe(false)

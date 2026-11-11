@@ -31,11 +31,12 @@ Faire tourner un modèle en local, c'est la garantie que vos conversations ne qu
 | **Fichiers générés** | Demandez « écris-moi `jeu.py` » : le fichier apparaît dans un panneau avec aperçu et téléchargement. Un bloc de code devient un fichier d'un clic. |
 | **Fenêtre de contexte** | Taille réglable avec une jauge d'utilisation et le niveau de réflexion (Off / Low / Medium / High). |
 | **Température** | Précis / Équilibré / Souple / Créatif : à basse température, un petit modèle est nettement plus fiable (mesuré : 86 % à 0,4 contre 67 % à 1,0). « Équilibré » par défaut. |
+| **Instructions personnalisées** | Un champ libre (800 caractères) ajouté au prompt système : « tutoie-moi », « donne des exemples en Python »… Suivi mesuré à 57 % contre 11 % sans lui sur un petit modèle ; le coût en tokens est affiché. |
 | **Compaction automatique** | Quand la conversation approche de la limite du contexte, les anciens messages sont résumés par le modèle ; vos messages d'origine restent affichés et conservés. |
 | **Édition** | Modifier un message, régénérer une réponse. |
 | **Sauvegarde** | Export et import JSON de vos conversations ; un historique partiellement corrompu est réparé plutôt que rejeté. |
 | **Connexion** | Bannière explicative et reconnexion automatique si Ollama ne répond pas ; adresse du serveur réglable. |
-| **Prompts évalués** | Les consignes envoyées au modèle (prompt système, outil de fichiers, résumé des longues conversations) ont été choisies par mesure : un banc de 61 cas, des correcteurs testés, des intervalles de confiance et des cas mis de côté. Sur le modèle de test à température 0,2 : **65 % → 88 %** de réussite ; la température compte autant que le prompt, d'où le réglage ci-dessus. Méthode, découvertes et limites : [docs/prompt-engineering.md](docs/prompt-engineering.md). |
+| **Prompts évalués** | Les consignes envoyées au modèle (prompt système, outil de fichiers, résumé des longues conversations) ont été choisies par mesure : un banc de 68 cas, des correcteurs testés, des intervalles de confiance et des cas mis de côté. Sur le modèle de test à température 0,2 : **65 % → 88 %** de réussite ; la température compte autant que le prompt, d'où le réglage ci-dessus. Méthode, découvertes et limites : [docs/prompt-engineering.md](docs/prompt-engineering.md). |
 
 **Raccourcis** : `Ctrl+K` nouvelle conversation · `Ctrl+,` paramètres · `Échap` arrêter la génération · `Entrée` envoyer (`Maj+Entrée` pour un retour à la ligne).
 

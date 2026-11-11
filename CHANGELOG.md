@@ -5,6 +5,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+### Instructions personnalisées
+- Nouveau champ **Paramètres → Instructions personnalisées** (800 caractères, compteur en tokens, bouton Effacer), ajouté à la fin du prompt système. Formulation choisie par mesure : consignes suivies 57 % du temps contre 11 % si elles sont ignorées (7 cas, 5 essais).
+
 ### Température
 - Nouveau réglage **Paramètres → Température** (Précis 0,2 · Équilibré 0,4 · Souple 0,7 · Créatif 1,0), « Équilibré » par défaut. Mesuré sur le banc d'évaluation : 86 % de réussite à 0,4 contre 67 % à 1,0, le réglage par défaut du modèle utilisé jusqu'ici.
 - Fermer les Paramètres rend le focus au champ de saisie.

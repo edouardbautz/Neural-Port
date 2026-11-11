@@ -1,4 +1,4 @@
-export type Category = "langue" | "concision" | "code" | "tableau" | "contexte" | "honnêteté" | "outil" | "outil-à-éviter"
+export type Category = "personnalisation" | "langue" | "concision" | "code" | "tableau" | "contexte" | "honnêteté" | "outil" | "outil-à-éviter"
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant"
@@ -31,6 +31,7 @@ export interface EvalCase {
   lang: "fr" | "en"
   messages: ChatMessage[]      // conversation envoyée (sans le prompt système, ajouté par la variante)
   tools: boolean               // l'outil create_file est-il proposé ?
+  custom?: string              // instructions personnalisées de l'utilisateur pour ce cas
   // Chaque contrôle vaut vrai ou faux ; l'essai réussit si tous réussissent
   grade: (reply: Reply, env: EvalEnv) => Record<string, boolean>
   // Réponses d'exemple pour tester le correcteur lui-même
@@ -42,6 +43,7 @@ export interface PromptContext {
   now: Date
   model: string
   useTools: boolean
+  customInstructions?: string
 }
 
 export interface PromptVariant {

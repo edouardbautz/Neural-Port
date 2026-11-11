@@ -43,9 +43,9 @@ Trois textes, tous définis dans `src/lib/` :
 
 `src/eval/` contient un banc complet, sans dépendance externe, lancé par `npm run eval:prompts` :
 
-- **61 cas** répartis en 8 catégories : langue, concision (forme demandée), code (blocs refermés, avec langage),
+- **68 cas** (46 de conception, 15 mis de côté, 7 pour les instructions personnalisées) répartis en 9 catégories : langue, concision (forme demandée), code (blocs refermés, avec langage),
   tableaux, contexte d'exécution (date, modèle, accès Internet), honnêteté (ne pas inventer), usage de l'outil
-  (l'appeler à bon escient) et outil à éviter (le mot « fichier » ne justifie pas de créer un fichier).
+  (l'appeler à bon escient), outil à éviter (le mot « fichier » ne justifie pas de créer un fichier) et personnalisation.
 - **Des correcteurs déterministes** (`graders.ts`), volontairement sans « modèle juge » : un petit modèle local est un
   mauvais juge, alors qu'un correcteur en code est reproductible, gratuit et testable.
 - **L'évaluation est elle-même testée** : chaque cas embarque une bonne et une mauvaise réponse d'exemple, et un test
@@ -166,6 +166,31 @@ Passer de 0,4 à 1,0 coûte **près de 20 points**, plus que ce que le prompt ra
 (**Paramètres → Température** : Précis 0,2 · Équilibré 0,4 · Souple 0,7 · Créatif 1,0) avec **Équilibré** par défaut :
 presque aussi fiable que « Précis » (86 % contre 88 %), avec un peu de variété. Pour l'écriture ou le brainstorming, on peut
 repasser en « Créatif ». La valeur est envoyée à Ollama à chaque message (`options.temperature`).
+
+### 9. Les instructions personnalisées de l'utilisateur
+
+Le champ **Paramètres → Instructions personnalisées** (800 caractères au plus, compteur en tokens, effaçable) ajoute le texte de
+l'utilisateur à la fin du prompt système. Sept cas ont mesuré si un petit modèle les suit (5 essais, température 0,4) : prénom à
+utiliser, ligne de signature exacte, exemples toujours en Python, réponse détaillée contre la règle « concis » du prompt de base,
+etc. Où et comment insérer le texte ?
+
+| Variante | Consignes suivies [IC 95 %] |
+|---|---|
+| Instructions ignorées (témoin) | 11 % [5–26] |
+| **À la fin, sous « Additional instructions: »** (retenue) | **57 % [41–72]** ▲ |
+| Au début du prompt | 57 % [41–72] |
+| À la fin, intitulé « from the user » | 46 % [30–62] |
+| À la fin, présentées comme prioritaires sur les règles | 46 % [30–62] |
+| À la fin, avec la règle de langue assouplie | 43 % [28–59] |
+
+La formulation la plus simple est retenue : les variantes plus élaborées ne font pas mieux, comme pour le prompt de base.
+Cas par cas, avec la formulation retenue : prénom 5/5, signature exacte 5/5, détail demandé malgré « concis » 5/5, exemples
+en Python 4/5 ; en revanche **« réponds toujours en anglais » à une question en français : 0/5**, « 20 mots au plus » : 0/5,
+« tutoie-moi » : 1/5. Ces trois-là dépassent un modèle de 0,8 milliard de paramètres : la règle de langue du prompt de base
+et son habitude de vouvoyer pèsent plus lourd que la consigne.
+
+Choix de conception : le texte est normalisé (retours à la ligne, plafond), il compte dans l'estimation de la fenêtre de
+contexte, et le prompt reste identique d'un message à l'autre tant que le texte ne change pas (cache de préfixe conservé).
 
 ## Résultats finaux (température 0,2)
 

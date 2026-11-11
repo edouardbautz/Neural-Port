@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { buildSystemPrompt, CREATE_FILE_TOOL, formatDay, formatNow, TOOL_DEFINITION_CHARS } from "./prompts"
+import { buildSystemPrompt, CREATE_FILE_TOOL, customBlock, formatDay, formatNow, TOOL_DEFINITION_CHARS } from "./prompts"
 
 const noon = new Date(2026, 10, 11, 12, 0)
 
@@ -40,6 +40,29 @@ describe("buildSystemPrompt", () => {
   })
   it("est rédigé en anglais : un prompt en français fait répondre en français à des questions en anglais", () => {
     expect(buildSystemPrompt({ now: noon, model: "m", useTools: true })).not.toMatch(/\b(Tu|Réponds|Nous sommes)\b/)
+  })
+})
+
+describe("instructions personnalisées", () => {
+  const base = { now: noon, model: "m", useTools: false }
+  it("sont ajoutées à la fin, sous un intitulé neutre", () => {
+    const p = buildSystemPrompt({ ...base, customInstructions: "Tutoie-moi." })
+    expect(p.endsWith("Additional instructions:\nTutoie-moi.")).toBe(true)
+  })
+  it("ne changent rien quand elles sont vides ou blanches", () => {
+    const plain = buildSystemPrompt(base)
+    expect(buildSystemPrompt({ ...base, customInstructions: "" })).toBe(plain)
+    expect(buildSystemPrompt({ ...base, customInstructions: "  \n " })).toBe(plain)
+    expect(customBlock(undefined)).toEqual([])
+  })
+  it("laissent le prompt stable : même texte, même prompt (cache de préfixe)", () => {
+    const a = buildSystemPrompt({ ...base, customInstructions: "Sois bref." })
+    const b = buildSystemPrompt({ ...base, now: new Date(2026, 10, 11, 23, 0), customInstructions: "Sois bref." })
+    expect(a).toBe(b)
+  })
+  it("passent après la ligne de l'outil", () => {
+    const p = buildSystemPrompt({ ...base, useTools: true, customInstructions: "X" })
+    expect(p.indexOf("create_file")).toBeLessThan(p.indexOf("X"))
   })
 })
 

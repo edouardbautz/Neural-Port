@@ -6,6 +6,7 @@ import FilesPanel from './components/FilesPanel'
 import SettingsPanel from './components/SettingsPanel'
 import CompactionDivider from './components/CompactionDivider'
 import { ctxSteps, isThinkLevel, THINK_LEVELS, type ThinkLevel } from './lib/context'
+import { normalizeInstructions } from './lib/instructions'
 import { DEFAULT_TEMPERATURE_LEVEL, isTemperatureLevel, temperatureValue, type TemperatureLevel } from './lib/temperature'
 import { repairFences } from './lib/markdown'
 import {
@@ -61,6 +62,7 @@ const CTX_KEY = "neural-port-ctx"
 const MODEL_KEY = "neural-port-model"
 const THINK_KEY = "neural-port-think"
 const TEMPERATURE_KEY = "neural-port-temperature"
+const INSTRUCTIONS_KEY = "neural-port-instructions"
 const COMPACT_KEY = "neural-port-compaction"
 const DEFAULT_CTX = 16384
 const STREAM_FLUSH_MS = 50
@@ -175,6 +177,14 @@ function App() {
     }
     return DEFAULT_TEMPERATURE_LEVEL
   })
+  const [customInstructions, setCustomInstructions] = useState<string>(() => {
+    try {
+      return localStorage.getItem(INSTRUCTIONS_KEY) ?? ""
+    } catch {
+      return ""
+    }
+  })
+  const instructions = useMemo(() => normalizeInstructions(customInstructions), [customInstructions])
   const [thinkSupport, setThinkSupport] = useState<"none" | "toggle" | "levels">("toggle")
   const [compaction, setCompaction] = useState<CompactionSettings>(() => {
     try {
@@ -236,7 +246,7 @@ function App() {
   // Fichiers générés (outil create_file ou bouton sur un bloc de code). Le panneau se rouvre quand un nouveau fichier est prêt.
   const files = useMemo(() => messages.flatMap(m => m.files ?? []), [messages])
   // Taille du prompt système sans outil, pour l'estimation affichée dans les Paramètres
-  const baseSystemChars = useMemo(() => buildSystemPrompt({ now: new Date(), model: activeModel, useTools: false }).length, [activeModel])
+  const baseSystemChars = useMemo(() => buildSystemPrompt({ now: new Date(), model: activeModel, useTools: false, customInstructions: instructions }).length, [activeModel, instructions])
   const [panelClosed, setPanelClosed] = useState<{ id: string | null; count: number }>({ id: null, count: 0 })
   const panelOpen = files.length > 0 && !(panelClosed.id === activeId && panelClosed.count === files.length)
 
@@ -279,6 +289,15 @@ function App() {
       // ignore
     }
   }, [thinkLevel])
+
+  useEffect(() => {
+    try {
+      if (customInstructions) localStorage.setItem(INSTRUCTIONS_KEY, customInstructions)
+      else localStorage.removeItem(INSTRUCTIONS_KEY)
+    } catch {
+      // ignore
+    }
+  }, [customInstructions])
 
   useEffect(() => {
     try {
@@ -719,7 +738,7 @@ function App() {
       const info = await getModelInfo(activeModel!)
       const useTools = isFileRequest(userMessage.content) && info.tools
       // Prompt système (stable dans la journée : voir buildSystemPrompt) et définition de l'outil : ils comptent dans la fenêtre de contexte
-      const systemPrompt = buildSystemPrompt({ now: new Date(), model: activeModel, useTools })
+      const systemPrompt = buildSystemPrompt({ now: new Date(), model: activeModel, useTools, customInstructions: instructions })
       const promptOverhead = systemPrompt.length + (useTools ? TOOL_DEFINITION_CHARS : 0)
 
       // Compaction : si la requête risque de dépasser le seuil de la fenêtre de contexte, les anciens messages
@@ -1277,6 +1296,8 @@ function App() {
           onThinkChange={setThinkLevel}
           temperatureLevel={temperatureLevel}
           onTemperatureChange={setTemperatureLevel}
+          customInstructions={customInstructions}
+          onCustomInstructionsChange={setCustomInstructions}
           ollamaUrl={ollamaUrl}
           defaultOllamaUrl={DEFAULT_OLLAMA_URL}
           connection={connection}

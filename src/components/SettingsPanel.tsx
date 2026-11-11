@@ -5,6 +5,7 @@ import StepSlider from "./StepSlider"
 import { THRESHOLDS, type CompactionSettings, type ConversationSummary } from "../lib/compaction"
 import { ctxSteps, THINK_LEVELS, type ThinkLevel } from "../lib/context"
 import { TEMPERATURE_LEVELS, type TemperatureLevel } from "../lib/temperature"
+import { instructionsTokens, MAX_INSTRUCTIONS_CHARS, normalizeInstructions } from "../lib/instructions"
 
 function fmt(n: number): string {
   return n >= 1024 ? `${n / 1024}k` : String(n)
@@ -29,6 +30,8 @@ interface SettingsPanelProps {
   onThinkChange: (value: ThinkLevel) => void
   temperatureLevel: TemperatureLevel
   onTemperatureChange: (value: TemperatureLevel) => void
+  customInstructions: string
+  onCustomInstructionsChange: (value: string) => void
   ollamaUrl: string
   defaultOllamaUrl: string
   connection: "checking" | "ok" | "down"
@@ -39,7 +42,7 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
-function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, temperatureLevel, onTemperatureChange, ollamaUrl, defaultOllamaUrl, connection, onOllamaUrlChange, conversationCount, onExport, onImport, onClose }: SettingsPanelProps) {
+function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, temperatureLevel, onTemperatureChange, customInstructions, onCustomInstructionsChange, ollamaUrl, defaultOllamaUrl, connection, onOllamaUrlChange, conversationCount, onExport, onImport, onClose }: SettingsPanelProps) {
   const [urlDraft, setUrlDraft] = useState(ollamaUrl)
   const [urlError, setUrlError] = useState<string | null>(null)
   const [importStatus, setImportStatus] = useState<{ ok: boolean; message: string } | null>(null)
@@ -163,6 +166,38 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactio
           />
 
           <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{temperatureInfo.description}</p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor="custom-instructions" className="text-sm font-medium">Instructions personnalisées</label>
+            <span className="text-xs tabular-nums text-zinc-600 dark:text-zinc-400">
+              {normalizeInstructions(customInstructions).length} / {MAX_INSTRUCTIONS_CHARS} · ≈ {instructionsTokens(customInstructions)} tokens
+            </span>
+          </div>
+          <textarea
+            id="custom-instructions"
+            value={customInstructions}
+            onChange={e => onCustomInstructionsChange(e.target.value.slice(0, MAX_INSTRUCTIONS_CHARS * 2))}
+            rows={4}
+            spellCheck
+            placeholder="Ex. : Tutoie-moi. Je suis développeur Python débutant : donne toujours des exemples en Python."
+            aria-describedby="custom-instructions-help"
+            className="w-full resize-y px-3 py-2 rounded-lg text-sm leading-relaxed bg-zinc-100 dark:bg-zinc-800 placeholder-zinc-500 dark:placeholder-zinc-400 outline-none focus:ring-1 focus:ring-indigo-400"
+          />
+          <div className="flex items-start justify-between gap-3">
+            <p id="custom-instructions-help" className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+              Ajoutées au prompt système à chaque message et prioritaires sur ses règles générales. Elles comptent dans la fenêtre de contexte : restez bref.
+            </p>
+            {customInstructions && (
+              <button
+                onClick={() => onCustomInstructionsChange("")}
+                className="shrink-0 px-2 py-1.5 rounded-lg text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer transition-colors"
+              >
+                Effacer
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col gap-3">

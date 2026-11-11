@@ -202,4 +202,38 @@ export const PRODUCTION: PromptVariant = {
   tool: CREATE_FILE_TOOL
 }
 
-export const VARIANTS: Record<string, PromptVariant> = Object.fromEntries([...ROUND_1, ...ROUND_2, ...ROUND_3, ...ROUND_4, PRODUCTION].map(v => [v.id, v]))
+// ---------- Instructions personnalisées : où et comment les insérer ----------
+const noCustom = (ctx: PromptContext) => buildSystemPrompt({ ...ctx, customInstructions: undefined })
+const customNone: PromptVariant = {
+  id: "perso-ignorees",
+  label: "Témoin : les instructions de l'utilisateur ne sont pas envoyées",
+  build: noCustom
+}
+const customPlain: PromptVariant = {
+  id: "perso-simple",
+  label: "À la fin, sous « Additional instructions: »",
+  build: ctx => (ctx.customInstructions ? `${noCustom(ctx)}\n\nAdditional instructions:\n${ctx.customInstructions}` : noCustom(ctx))
+}
+const customFirst: PromptVariant = {
+  id: "perso-debut",
+  label: "Au début du prompt, avant les règles générales",
+  build: ctx => (ctx.customInstructions ? `${ctx.customInstructions}\n\n${noCustom(ctx)}` : noCustom(ctx))
+}
+
+const customUnless: PromptVariant = {
+  id: "perso-sauf",
+  label: "Simple, et la règle de langue cède devant les instructions de l'utilisateur",
+  build: ctx => {
+    const base = noCustom(ctx).replace("Reply in the user's language.", "Reply in the user's language unless the user's instructions say otherwise.")
+    return ctx.customInstructions ? `${base}\n\nAdditional instructions:\n${ctx.customInstructions}` : base
+  }
+}
+const customFromUser: PromptVariant = {
+  id: "perso-utilisateur",
+  label: "Simple, intitulé « Additional instructions from the user: »",
+  build: ctx => (ctx.customInstructions ? `${noCustom(ctx)}\n\nAdditional instructions from the user:\n${ctx.customInstructions}` : noCustom(ctx))
+}
+
+export const ROUND_5: PromptVariant[] = [customNone, customPlain, customFirst, customUnless, customFromUser]
+
+export const VARIANTS: Record<string, PromptVariant> = Object.fromEntries([...ROUND_1, ...ROUND_2, ...ROUND_3, ...ROUND_4, ...ROUND_5, PRODUCTION].map(v => [v.id, v]))

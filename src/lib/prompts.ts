@@ -50,6 +50,7 @@ export interface PromptContext {
   now: Date
   model?: string
   useTools: boolean
+  customInstructions?: string   // instructions de l'utilisateur (déjà normalisées)
 }
 
 // Taille de la définition de l'outil quand elle est envoyée avec la requête
@@ -66,6 +67,15 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     `You are a local AI assistant${ctx.model ? ` (model ${ctx.model}, running through Ollama)` : " (running through Ollama)"} with no Internet access. Today is ${formatDay(ctx.now, "en-US")}.`,
     "Reply in the user's language. Be concise and direct. If you don't know, say so: never make things up.",
     "Put code in ``` blocks tagged with the language name.",
-    ...(ctx.useTools ? ["Use the create_file tool only when the user asks for a file."] : [])
+    ...(ctx.useTools ? ["Use the create_file tool only when the user asks for a file."] : []),
+    ...customBlock(ctx.customInstructions)
   ].join("\n")
+}
+
+// Instructions de l'utilisateur : placées en dernier, sous un intitulé neutre. Mesuré sur 7 cas (5 essais, température 0,4) :
+// suivies 57 % du temps contre 11 % si elles sont ignorées ; la même consigne présentée comme « prioritaire » (46 %), placée
+// au début (57 %) ou avec une règle de langue assouplie (43 %) ne fait pas mieux : le texte le plus simple est retenu.
+export function customBlock(instructions: string | undefined): string[] {
+  const text = instructions?.trim()
+  return text ? ["", "Additional instructions:", text] : []
 }

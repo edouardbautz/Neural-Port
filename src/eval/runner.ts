@@ -61,7 +61,7 @@ export interface RunOptions {
 }
 
 export async function runTrial(chat: ChatFn, variant: PromptVariant, testCase: EvalCase, sample: number, env: EvalEnv, options: RunOptions): Promise<TrialResult> {
-  const system = variant.build({ now: env.now, model: env.model, useTools: testCase.tools })
+  const system = variant.build({ now: env.now, model: env.model, useTools: testCase.tools, customInstructions: testCase.custom })
   const messages: ChatMessage[] = system ? [{ role: "system", content: system }, ...testCase.messages] : testCase.messages
   const reply: Reply = await chat({
     model: options.model, messages, tools: testCase.tools, tool: variant.tool, temperature: options.temperature,
