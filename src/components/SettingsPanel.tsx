@@ -1,4 +1,6 @@
+import { useRef, useState } from "react"
 import { XIcon } from "./icons"
+import { normalizeOllamaUrl } from "../lib/ollama"
 import StepSlider from "./StepSlider"
 import { THRESHOLDS, type CompactionSettings, type ConversationSummary } from "../lib/compaction"
 import { ctxSteps, THINK_LEVELS, type ThinkLevel } from "../lib/context"
@@ -24,10 +26,38 @@ interface SettingsPanelProps {
   thinkLevel: ThinkLevel
   thinkSupport: "none" | "toggle" | "levels"  // ce que le modèle sait faire
   onThinkChange: (value: ThinkLevel) => void
+  ollamaUrl: string
+  defaultOllamaUrl: string
+  connection: "checking" | "ok" | "down"
+  onOllamaUrlChange: (value: string) => string | null  // renvoie un message d'erreur si l'adresse est invalide
+  conversationCount: number
+  onExport: () => void
+  onImport: (text: string) => { ok: boolean; message: string }
   onClose: () => void
 }
 
-function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, onClose }: SettingsPanelProps) {
+function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactionChange, summary, canCompact, busy, nextEstimate, effectiveCtx, onCompactNow, onClearSummary, thinkLevel, thinkSupport, onThinkChange, ollamaUrl, defaultOllamaUrl, connection, onOllamaUrlChange, conversationCount, onExport, onImport, onClose }: SettingsPanelProps) {
+  const [urlDraft, setUrlDraft] = useState(ollamaUrl)
+  const [urlError, setUrlError] = useState<string | null>(null)
+  const [importStatus, setImportStatus] = useState<{ ok: boolean; message: string } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  function applyUrl() {
+    const error = onOllamaUrlChange(urlDraft)
+    setUrlError(error)
+    if (!error) setUrlDraft(normalizeOllamaUrl(urlDraft) ?? defaultOllamaUrl)
+  }
+
+  async function handleFile(file: File | undefined) {
+    if (!file) return
+    try {
+      setImportStatus(onImport(await file.text()))
+    } catch {
+      setImportStatus({ ok: false, message: "Impossible de lire ce fichier." })
+    }
+    if (fileRef.current) fileRef.current.value = ""
+  }
+
   const steps = ctxSteps(maxCtx)
   // Palier le plus proche de la valeur enregistrée
   const index = steps.reduce((best, s, i) => (Math.abs(s - numCtx) < Math.abs(steps[best] - numCtx) ? i : best), 0)
@@ -191,6 +221,58 @@ function SettingsPanel({ numCtx, maxCtx, used, onChange, compaction, onCompactio
             </>
           ) : (
             <span className="text-xs text-zinc-400 dark:text-zinc-500">Disponible après la première réponse.</span>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor="ollama-url" className="text-sm font-medium">Adresse d'Ollama</label>
+            <span className={`text-xs font-medium ${connection === "ok" ? "text-emerald-500" : connection === "down" ? "text-amber-500" : "text-zinc-400"}`}>
+              {connection === "ok" ? "Connecté" : connection === "down" ? "Injoignable" : "Connexion…"}
+            </span>
+          </div>
+          <input
+            id="ollama-url"
+            value={urlDraft}
+            onChange={e => { setUrlDraft(e.target.value); setUrlError(null) }}
+            onBlur={applyUrl}
+            onKeyDown={e => { if (e.key === "Enter") applyUrl() }}
+            disabled={busy}
+            spellCheck={false}
+            placeholder={defaultOllamaUrl}
+            aria-invalid={urlError != null}
+            className="w-full px-3 py-1.5 rounded-lg text-sm bg-zinc-100 dark:bg-zinc-800 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none focus:ring-1 focus:ring-indigo-400 disabled:opacity-50"
+          />
+          {urlError && <p role="alert" className="text-xs text-red-500">{urlError}</p>}
+          <p className="text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+            Par défaut {defaultOllamaUrl}. Pour joindre Ollama depuis une autre adresse, démarre-le avec la variable <code>OLLAMA_ORIGINS</code> (voir le README).
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Données</span>
+          <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Tes conversations sont conservées dans ce navigateur uniquement. Exporte-les pour les sauvegarder ou les retrouver sur un autre navigateur.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={onExport}
+              disabled={conversationCount === 0}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              Exporter ({conversationCount})
+            </button>
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={busy}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              Importer…
+            </button>
+            <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={e => void handleFile(e.target.files?.[0])} />
+          </div>
+          {importStatus && (
+            <p role="status" className={`text-xs ${importStatus.ok ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}`}>{importStatus.message}</p>
           )}
         </div>
 

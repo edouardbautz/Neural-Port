@@ -22,11 +22,11 @@ import {
 } from './lib/compaction'
 import { makeOllamaSummarizer } from './lib/summarize'
 import { ratioFrom, type Calibration } from './lib/tokens'
-import { extensionFor, extractCodeBlocks, filenameFromRequest, isFileRequest, makeFile, type GeneratedFile } from './lib/files'
+import { downloadText, extensionFor, extractCodeBlocks, filenameFromRequest, isFileRequest, makeFile, type GeneratedFile } from './lib/files'
+import { exportFilename, exportHistory, mergeConversations, parseImport, sanitizeConversations } from './lib/history'
+import { DEFAULT_OLLAMA_URL, getOllamaUrl, loadSavedOllamaUrl, normalizeOllamaUrl, saveOllamaUrl, setOllamaUrl } from './lib/ollama'
 import { Fragment } from 'react'
 import { MenuIcon, SlidersIcon } from './components/icons'
-
-const OLLAMA_URL = "http://localhost:11434"
 
 export interface Message {
   role: "user" | "assistant"
@@ -72,24 +72,13 @@ function validSummary(summary: ConversationSummary | undefined, threadLength: nu
   return summary && summary.upTo <= threadLength - 1 ? summary : undefined
 }
 
-// Une entrée corrompue du stockage ne doit pas faire planter l'application
-function isConversation(value: unknown): value is Conversation {
-  if (!value || typeof value !== "object") return false
-  const c = value as Record<string, unknown>
-  return (
-    typeof c.id === "string" && typeof c.title === "string" && Array.isArray(c.messages) &&
-    c.messages.every(m => !!m && typeof m === "object" && ((m as Message).role === "user" || (m as Message).role === "assistant") && typeof (m as Message).content === "string") &&
-    typeof c.updatedAt === "number"
-  )
-}
-
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
 async function checkModelLoaded(model: string): Promise<boolean> {
   try {
-    const ps = await fetch(`${OLLAMA_URL}/api/ps`)
+    const ps = await fetch(`${getOllamaUrl()}/api/ps`)
     const data = (await ps.json()) as { models?: { name: string }[] }
     return data.models?.some(m => m.name === model) ?? false
   } catch {
@@ -131,7 +120,7 @@ async function getModelInfo(model: string): Promise<ModelInfo> {
   const cached = modelInfoCache.get(model)
   if (cached) return cached
   try {
-    const res = await fetch(`${OLLAMA_URL}/api/show`, {
+    const res = await fetch(`${getOllamaUrl()}/api/show`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model })
@@ -245,6 +234,10 @@ function App() {
     return DEFAULT_COMPACTION
   })
   const [liveThinking, setLiveThinking] = useState("")
+  const [ollamaUrl, setOllamaUrlState] = useState(() => loadSavedOllamaUrl())
+  const [connection, setConnection] = useState<"checking" | "ok" | "down">("checking")
+  const [retrying, setRetrying] = useState(false)
+  const [storageFull, setStorageFull] = useState(false)
   const thinkBufferRef = useRef("")
   const [activeModel, setActiveModel] = useState<string | undefined>(() => {
     try {
@@ -259,8 +252,9 @@ function App() {
     try {
       const raw = localStorage.getItem(HISTORY_KEY)
       if (raw) {
-        const parsed: unknown = JSON.parse(raw)
-        if (Array.isArray(parsed)) return parsed.filter(isConversation)
+        const { conversations: loaded, repaired, skipped } = sanitizeConversations(JSON.parse(raw))
+        if (repaired > 0 || skipped > 0) console.warn(`Historique : ${repaired} conversation(s) réparée(s), ${skipped} élément(s) inutilisable(s) ignoré(s)`)
+        return loaded
       }
     } catch {
       // Historique corrompu ou stockage indisponible : on repart de zéro
@@ -334,8 +328,10 @@ function App() {
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationsRef.current))
       dirtyRef.current = false
+      setStorageFull(false)
     } catch {
-      // Stockage plein ou bloqué : l'historique ne sera simplement pas conservé
+      // Stockage plein ou bloqué : on le signale (bandeau) pour que l'utilisateur puisse exporter avant de tout perdre
+      setStorageFull(true)
     }
   }
 
@@ -397,7 +393,7 @@ function App() {
     const timer = setTimeout(async () => {
       setModelStatus("loading")
       try {
-        const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+        const res = await fetch(`${getOllamaUrl()}/api/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: activeModel, prompt: "", stream: false, options: { num_ctx: effectiveCtx } }),
@@ -465,21 +461,81 @@ function App() {
     }
   }, [isLoading, isStreaming, activeModel])
 
-  useEffect(() => {
-    async function fetchModels() {
-      try {
-        const response = await fetch(`${OLLAMA_URL}/api/tags`)
-        const data = (await response.json()) as OllamaModelResponse
-        const names = data.models.map(model => model.name)
-        setModelList(names)
-        // Le modèle mémorisé a pu être supprimé entre-temps
-        setActiveModel(current => (current && names.includes(current) ? current : undefined))
-      } catch (error) {
-        console.error("Impossible de contacter Ollama:", error)
-      }
+  // Liste des modèles installés ; sert aussi à savoir si Ollama répond
+  async function fetchModels(): Promise<boolean> {
+    const url = getOllamaUrl()
+    try {
+      const response = await fetch(`${url}/api/tags`)
+      if (!response.ok) throw new Error(`Ollama a répondu ${response.status}`)
+      const data = (await response.json()) as Partial<OllamaModelResponse>
+      if (url !== getOllamaUrl()) return false // l'adresse a changé pendant la requête
+      const names = Array.isArray(data.models) ? data.models.map(model => model.name) : []
+      setModelList(names)
+      // Le modèle mémorisé a pu être supprimé entre-temps
+      setActiveModel(current => (current && names.includes(current) ? current : undefined))
+      setConnection("ok")
+      return true
+    } catch (error) {
+      if (url !== getOllamaUrl()) return false
+      console.error("Impossible de contacter Ollama:", error)
+      setConnection("down")
+      return false
     }
-    fetchModels()
-  }, [])
+  }
+
+  useEffect(() => {
+    void fetchModels()
+  }, [ollamaUrl])
+
+  // Ollama injoignable : on réessaie régulièrement, l'interface se rétablit toute seule dès qu'il répond
+  useEffect(() => {
+    if (connection !== "down") return
+    const id = setInterval(() => void fetchModels(), 5000)
+    return () => clearInterval(id)
+  }, [connection, ollamaUrl])
+
+  async function retryConnection() {
+    setRetrying(true)
+    await fetchModels()
+    setRetrying(false)
+  }
+
+  // Applique une adresse saisie dans les Paramètres ; renvoie un message d'erreur si elle est invalide
+  function changeOllamaUrl(input: string): string | null {
+    const url = normalizeOllamaUrl(input)
+    if (!url) return "Adresse invalide : saisis par exemple http://localhost:11434"
+    if (url === ollamaUrl) return null
+    setOllamaUrl(url)
+    saveOllamaUrl(url)
+    modelInfoCache.clear()
+    setModelList([])
+    setModelStatus("idle")
+    setMaxCtx(null)
+    setConnection("checking")
+    setOllamaUrlState(url)
+    return null
+  }
+
+  function exportConversations() {
+    downloadText(exportFilename(), exportHistory(conversationsRef.current), "application/json;charset=utf-8")
+  }
+
+  function importConversations(text: string): { ok: boolean; message: string } {
+    const parsed = parseImport(text)
+    if (!parsed.ok) return { ok: false, message: parsed.error }
+    const { added } = mergeConversations(conversationsRef.current, parsed.result.conversations)
+    setConversations(prev => mergeConversations(prev, parsed.result.conversations).merged)
+    const { conversations: found, repaired, skipped } = parsed.result
+    const notes = [
+      found.length > added ? `${found.length - added} déjà présente${found.length - added > 1 ? "s" : ""}` : "",
+      repaired > 0 ? `${repaired} réparée${repaired > 1 ? "s" : ""}` : "",
+      skipped > 0 ? `${skipped} ignorée${skipped > 1 ? "s" : ""}` : ""
+    ].filter(Boolean)
+    return {
+      ok: true,
+      message: `${added} conversation${added > 1 ? "s" : ""} importée${added > 1 ? "s" : ""}${notes.length ? ` (${notes.join(", ")})` : ""}.`
+    }
+  }
 
   // Suit la position réelle (molette, tactile, barre de défilement, clavier) : le défilement automatique
   // se suspend dès qu'on remonte et reprend quand on revient en bas
@@ -576,7 +632,7 @@ function App() {
     signal: AbortSignal,
     auto: boolean
   ): Promise<{ summary?: ConversationSummary; failure?: "nothing" | "invalid" | "error" }> {
-    const summarize = makeOllamaSummarizer({ baseUrl: OLLAMA_URL, model: activeModel!, numCtx: effectiveCtx, canThink: info.thinking, signal })
+    const summarize = makeOllamaSummarizer({ baseUrl: getOllamaUrl(), model: activeModel!, numCtx: effectiveCtx, canThink: info.thinking, signal })
     try {
       const result = await compactConversation({
         messages,
@@ -801,7 +857,7 @@ function App() {
         let firstTokenAt: number | null = null  // début de la génération (exclut chargement et lecture de la question)
 
         try {
-          const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+          const response = await fetch(`${getOllamaUrl()}/api/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1100,6 +1156,28 @@ function App() {
         </div>
       </header>
 
+      {storageFull && (
+        <div role="alert" className="shrink-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 py-2 text-xs bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 border-b border-red-200 dark:border-red-500/30">
+          <span>Le stockage du navigateur est plein : tes conversations ne sont plus sauvegardées. Exporte-les, puis supprime les anciennes.</span>
+          <button onClick={exportConversations} className="font-semibold underline underline-offset-2 cursor-pointer">Exporter</button>
+        </div>
+      )}
+
+      {connection === "down" && (
+        <div role="alert" className="shrink-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-xs bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-200 border-b border-amber-200 dark:border-amber-500/30">
+          <span>
+            Impossible de joindre Ollama ({ollamaUrl}). Lance-le avec <code className="px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-500/20">ollama serve</code>.
+            S'il tourne ailleurs ou refuse la connexion, règle son adresse dans les Paramètres (voir le README pour <code>OLLAMA_ORIGINS</code>).
+          </span>
+          <span className="flex items-center gap-3">
+            <button onClick={retryConnection} disabled={retrying} className="font-semibold underline underline-offset-2 disabled:opacity-50 cursor-pointer disabled:cursor-wait">
+              {retrying ? "Connexion…" : "Réessayer"}
+            </button>
+            <button onClick={() => setSettingsOpen(true)} className="font-semibold underline underline-offset-2 cursor-pointer">Paramètres</button>
+          </span>
+        </div>
+      )}
+
       <div className="flex-1 overflow-hidden flex justify-center">
         <div className="relative w-full max-w-3xl">
           <div
@@ -1154,9 +1232,24 @@ function App() {
                   Neural-Port
                 </span>
                 <p className="text-sm text-zinc-400 dark:text-zinc-500">
-                  {activeModel ? "Posez votre première question…" : "Sélectionnez un modèle pour commencer"}
+                  {connection === "down"
+                    ? "Ollama n'est pas joignable pour l'instant"
+                    : connection === "checking"
+                      ? "Connexion à Ollama…"
+                      : modelList.length === 0
+                        ? "Aucun modèle installé dans Ollama"
+                        : activeModel ? "Posez votre première question…" : "Sélectionnez un modèle pour commencer"}
                 </p>
-                {activeModel && (
+                {connection === "ok" && modelList.length === 0 && (
+                  <div className="mt-2 flex flex-col items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    <span>Installe-en un dans un terminal, puis actualise :</span>
+                    <code className="px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 select-all">ollama pull llama3.2:3b</code>
+                    <button onClick={retryConnection} disabled={retrying} className="mt-1 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer transition-colors">
+                      {retrying ? "Actualisation…" : "Actualiser"}
+                    </button>
+                  </div>
+                )}
+                {activeModel && connection === "ok" && (
                   <div className="mt-4 flex flex-wrap justify-center gap-2 max-w-md">
                     {SUGGESTIONS.map(text => (
                       <button
@@ -1208,7 +1301,10 @@ function App() {
           <div className="flex items-center gap-1 shrink-0 pb-1">
             <div className="relative">
               <button
-                onClick={() => setIsPopupOpen(!isPopupOpen)}
+                onClick={() => {
+                  if (!isPopupOpen) void fetchModels() // un modèle installé entre-temps apparaît tout de suite
+                  setIsPopupOpen(!isPopupOpen)
+                }}
                 disabled={busy}
                 aria-label="Choisir le modèle"
                 aria-haspopup="listbox"
@@ -1290,6 +1386,13 @@ function App() {
           thinkLevel={thinkLevel}
           thinkSupport={thinkSupport}
           onThinkChange={setThinkLevel}
+          ollamaUrl={ollamaUrl}
+          defaultOllamaUrl={DEFAULT_OLLAMA_URL}
+          connection={connection}
+          onOllamaUrlChange={changeOllamaUrl}
+          conversationCount={conversations.length}
+          onExport={exportConversations}
+          onImport={importConversations}
           onClose={() => setSettingsOpen(false)}
         />
       )}

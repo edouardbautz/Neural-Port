@@ -46,16 +46,20 @@ export function makeFile(name: string, content: string, lang: string | null, exi
   }
 }
 
-export function downloadFile(file: GeneratedFile) {
-  const url = URL.createObjectURL(new Blob([file.content], { type: "text/plain;charset=utf-8" }))
+export function downloadText(name: string, content: string, type = "text/plain;charset=utf-8") {
+  const url = URL.createObjectURL(new Blob([content], { type }))
   const a = document.createElement("a")
   a.href = url
-  a.download = file.name
+  a.download = name
   document.body.appendChild(a)
   a.click()
   a.remove()
   // Révoquer tout de suite peut annuler le téléchargement sur certains navigateurs
   setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+export function downloadFile(file: GeneratedFile) {
+  downloadText(file.name, file.content)
 }
 
 export interface CodeBlock {

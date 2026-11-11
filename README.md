@@ -38,6 +38,14 @@ Le niveau de réflexion (Off / Low / Medium / High) et la taille de la fenêtre 
 
 Quand la conversation approche de la limite de la fenêtre de contexte, les anciens messages sont résumés par le modèle et le résumé les remplace dans la requête. Vos messages restent affichés et conservés. Le seuil est réglable, et la compaction peut être lancée à la main.
 
+**Sauvegarde et import**
+
+Les conversations vivent dans le navigateur. Le panneau Paramètres permet de les exporter dans un fichier JSON et de les réimporter (sur un autre navigateur ou après un nettoyage). Un fichier partiellement corrompu est réparé plutôt que rejeté, et si le stockage du navigateur est plein, un bandeau vous prévient pour que vous puissiez exporter avant de perdre quoi que ce soit.
+
+**Connexion à Ollama**
+
+Si Ollama ne répond pas, l'interface l'indique avec la marche à suivre, réessaie toute seule et se rétablit dès qu'il revient. Si aucun modèle n'est installé, elle affiche la commande à lancer. L'adresse d'Ollama se règle dans les Paramètres.
+
 **Édition et raccourcis**
 
 Modifier un message, régénérer une réponse, renommer une conversation (double-clic), rechercher dans l'historique. `Ctrl+K` : nouvelle conversation · `Échap` : arrêter la génération.
@@ -65,6 +73,16 @@ npm run lint    # ESLint
 npm test        # tests unitaires (Vitest)
 npm run build   # vérification TypeScript + build de production
 ```
+
+## Ollama sur une autre adresse
+
+Par défaut, Neural-Port contacte `http://localhost:11434`. Si vous ouvrez l'application depuis une autre adresse (réseau local, Docker, autre machine), ou si Ollama refuse la connexion (erreur CORS), autorisez l'origine de l'application au démarrage d'Ollama :
+
+```bash
+OLLAMA_ORIGINS="http://localhost:5173" ollama serve
+```
+
+Remplacez l'origine par l'adresse réelle de l'application (ou `*` pour tout autoriser, à éviter hors de votre réseau). Si Ollama tourne sur une autre machine, ajoutez `OLLAMA_HOST=0.0.0.0`, puis saisissez son adresse dans Paramètres → Adresse d'Ollama. Une application servie en `https://` ne peut pas joindre un Ollama en `http://` (blocage du navigateur) : servez-la en `http://`.
 
 ## Ajouter des modèles
 
