@@ -57,9 +57,70 @@ export function isSettings(value: unknown): value is CompactionSettings {
   return typeof v.enabled === "boolean" && typeof v.threshold === "number" && v.threshold >= 0.3 && v.threshold <= 0.95
 }
 
-// Texte d'un message tel qu'il est envoyé au modèle (les fichiers créés sont rappelés en fin de message)
+// Un fichier trop long est tronqué au milieu : le début et la fin suffisent à situer le contenu sans saturer la fenêtre de contexte
+export const FILE_CONTEXT_MAX_CHARS = 8000
+const FILE_HEAD_CHARS = 5000
+const FILE_TAIL_CHARS = 2500
+
+// Contenu d'un fichier tel que le modèle le lit : tronqué au milieu s'il est très long
+function shownContent(file: GeneratedFile): string {
+  const text = file.content.trimEnd()
+  if (text.length <= FILE_CONTEXT_MAX_CHARS) return text
+  const omitted = text.slice(FILE_HEAD_CHARS, text.length - FILE_TAIL_CHARS).split("\n").length
+  return `${text.slice(0, FILE_HEAD_CHARS)}\n[… ${omitted} lines omitted …]\n${text.slice(text.length - FILE_TAIL_CHARS)}`
+}
+
+// Fichier créé, en texte : étiquette + bloc de code. Sans cela, le modèle ne sait plus ce qu'il a écrit : il ne peut ni répondre
+// « que contient ce fichier ? » ni le modifier sans le réécrire de mémoire.
+export function fileContext(file: GeneratedFile): string {
+  const shown = shownContent(file)
+  let fence = "```"
+  while (shown.includes(fence)) fence += "`"
+  return `[File created: ${file.name}]\n${fence}${file.lang === "text" ? "" : file.lang}\n${shown}\n${fence}`
+}
+
+// Texte d'un message tel qu'il est envoyé au modèle : le texte, puis les fichiers créés avec leur contenu.
+// Un fichier dont le contenu figure déjà dans le texte (bloc de code transformé en fichier) n'est pas répété.
 export function messageText(m: Msg): string {
-  return m.files?.length ? `${m.content}\n[Fichiers créés : ${m.files.map(f => f.name).join(", ")}]`.trim() : m.content
+  const parts = [m.content]
+  for (const file of m.files ?? []) parts.push(m.content.includes(file.content.trim()) ? `[File created: ${file.name}]` : fileContext(file))
+  return parts.filter(Boolean).join("\n\n").trim()
+}
+
+// Message tel qu'il est envoyé à Ollama
+export interface ModelMessage {
+  role: "user" | "assistant" | "tool"
+  content: string
+  tool_calls?: { function: { name: string; arguments: { filename: string; content: string } } }[]
+  tool_name?: string
+}
+
+// Messages à envoyer au modèle. Avec `native` (le modèle gère les outils), un fichier créé par l'outil est rejoué comme
+// l'appel qui l'a produit (tool_calls + message « tool ») : mesuré, le modèle retrouve ainsi le contenu de ses fichiers
+// 92 % du temps contre 75 % quand il est ajouté au texte, et 11 % quand seul le nom est rappelé (docs/prompt-engineering.md).
+// Les fichiers déjà visibles dans le texte du message (blocs de code transformés en fichiers) restent de simples étiquettes.
+export function toModelMessages(thread: Msg[], native: boolean): ModelMessage[] {
+  const out: ModelMessage[] = []
+  for (const m of thread) {
+    const files = m.files ?? []
+    const created = native && m.role === "assistant" ? files.filter(f => !m.content.includes(f.content.trim())) : []
+    if (created.length === 0) {
+      out.push({ role: m.role, content: messageText(m) })
+      continue
+    }
+    const others = files.filter(f => !created.includes(f)).map(f => `[File created: ${f.name}]`)
+    out.push({
+      role: "assistant",
+      content: [m.content, ...others].filter(Boolean).join("\n\n"),
+      tool_calls: created.map(f => ({ function: { name: "create_file", arguments: { filename: f.name, content: shownContent(f) } } }))
+    })
+    for (const f of created) out.push({ role: "tool", tool_name: "create_file", content: `File created: ${f.name}` })
+  }
+  return out
+}
+
+export function modelMessagesChars(messages: ModelMessage[]): number {
+  return messages.reduce((sum, m) => sum + m.content.length + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0)
 }
 
 export function summaryTargetTokens(ctx: number): number {
@@ -119,8 +180,8 @@ export function visibleThread(messages: Msg[], upTo: number): Msg[] {
 
 // Nombre de caractères d'une requête (même calcul pour la mesure et pour l'estimation, donc cohérent).
 // `overheadChars` : ce qui s'ajoute à la conversation (prompt système, définition de l'outil)
-export function requestChars(thread: Msg[], summary: Pick<ConversationSummary, "text" | "notes"> | undefined, overheadChars: number): number {
-  let chars = thread.reduce((sum, m) => sum + messageText(m).length, 0)
+export function requestChars(thread: Msg[], summary: Pick<ConversationSummary, "text" | "notes"> | undefined, overheadChars: number, native = false): number {
+  let chars = modelMessagesChars(toModelMessages(thread, native))
   if (summary) chars += summaryInjection(summary).length
   return chars + overheadChars
 }

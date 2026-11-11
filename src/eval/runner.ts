@@ -1,5 +1,6 @@
 import { CREATE_FILE_TOOL } from "../lib/prompts"
 import { leaksThinkTags, startsWithFiller } from "./graders"
+import { renderThread } from "./thread"
 import type { ChatMessage, EvalCase, EvalEnv, PromptVariant, Reply, TrialResult } from "./types"
 
 export interface ChatRequest {
@@ -62,7 +63,8 @@ export interface RunOptions {
 
 export async function runTrial(chat: ChatFn, variant: PromptVariant, testCase: EvalCase, sample: number, env: EvalEnv, options: RunOptions): Promise<TrialResult> {
   const system = variant.build({ now: env.now, model: env.model, useTools: testCase.tools, customInstructions: testCase.custom })
-  const messages: ChatMessage[] = system ? [{ role: "system", content: system }, ...testCase.messages] : testCase.messages
+  const conversation = testCase.thread ? renderThread(testCase.thread, variant.history ?? "text") : testCase.messages
+  const messages: ChatMessage[] = system ? [{ role: "system", content: system }, ...conversation] : conversation
   const reply: Reply = await chat({
     model: options.model, messages, tools: testCase.tools, tool: variant.tool, temperature: options.temperature,
     seed: options.seedBase + sample, numPredict: options.numPredict, numCtx: options.numCtx

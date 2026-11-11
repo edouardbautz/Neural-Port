@@ -7,6 +7,10 @@ import {
   summaryBody,
   userNotes,
   estimatePromptTokens,
+  FILE_CONTEXT_MAX_CHARS,
+  toModelMessages,
+  modelMessagesChars,
+  fileContext,
   messageText,
   planCompaction,
   requestChars,
@@ -135,9 +139,87 @@ describe("estimation de la requête", () => {
 })
 
 describe("construction des messages", () => {
-  it("rappelle les fichiers créés dans le texte du message", () => {
-    const m: M = { ...bot("voilà"), files: [{ id: "1", name: "a.py", lang: "py", content: "x" }] }
-    expect(messageText(m)).toContain("[Fichiers créés : a.py]")
+  it("rappelle les fichiers créés avec leur contenu : le modèle doit savoir ce qu'il a écrit", () => {
+    const m: M = { ...bot("voilà"), files: [{ id: "1", name: "a.py", lang: "py", content: "TAUX = 0.2\nprint(TAUX)\n" }] }
+    const text = messageText(m)
+    expect(text).toContain("voilà")
+    expect(text).toContain("[File created: a.py]")
+    expect(text).toContain("```py\nTAUX = 0.2\nprint(TAUX)\n```")
+  })
+
+  it("un message d'outil sans texte contient quand même le fichier", () => {
+    const m: M = { ...bot(""), files: [{ id: "1", name: "config.json", lang: "json", content: "{\"port\": 8081}" }] }
+    expect(messageText(m)).toContain("8081")
+    expect(messageText(m).startsWith("[File created: config.json]")).toBe(true)
+  })
+
+  it("ne répète pas un fichier dont le contenu est déjà dans le texte (bloc de code transformé en fichier)", () => {
+    const code = "def f():\n    return 1"
+    const m: M = { ...bot("Voici :\n```python\n" + code + "\n```"), files: [{ id: "1", name: "code-1.py", lang: "py", content: code + "\n" }] }
+    const text = messageText(m)
+    expect(text).toContain("[File created: code-1.py]")
+    expect(text.split("def f()").length - 1).toBe(1)
+  })
+
+  it("tronque un fichier très long au milieu en gardant le début et la fin", () => {
+    const lines = Array.from({ length: 2000 }, (_, i) => `ligne ${i}`)
+    const text = fileContext({ id: "1", name: "gros.txt", lang: "text", content: lines.join("\n") })
+    expect(text.length).toBeLessThan(FILE_CONTEXT_MAX_CHARS + 300)
+    expect(text).toContain("ligne 0")
+    expect(text).toContain("ligne 1999")
+    expect(text).toMatch(/\[… \d+ lines omitted …\]/)
+  })
+
+  it("utilise une clôture plus longue quand le fichier contient lui-même des blocs de code", () => {
+    const text = fileContext({ id: "1", name: "README.md", lang: "md", content: "Exemple :\n```js\nx\n```\n" })
+    expect(text).toContain("````md")
+  })
+
+  it("rejoue un fichier créé par l'outil comme l'appel qui l'a produit (modèle avec outils)", () => {
+    const file = { id: "1", name: "tva.py", lang: "py", content: "TAUX_TVA = 0.2\n" }
+    const out = toModelMessages([user("Crée tva.py"), { ...bot("Prêt."), files: [file] }, user("Quel taux ?")], true)
+    expect(out.map(m => m.role)).toEqual(["user", "assistant", "tool", "user"])
+    expect(out[1].content).toBe("Prêt.")
+    expect(out[1].tool_calls).toEqual([{ function: { name: "create_file", arguments: { filename: "tva.py", content: "TAUX_TVA = 0.2" } } }])
+    expect(out[2]).toEqual({ role: "tool", tool_name: "create_file", content: "File created: tva.py" })
+  })
+
+  it("rejoue plusieurs fichiers d'un même message, et un message sans texte", () => {
+    const files = [{ id: "1", name: "a.py", lang: "py", content: "a" }, { id: "2", name: "b.py", lang: "py", content: "b" }]
+    const out = toModelMessages([{ ...bot(""), files }], true)
+    expect(out.map(m => m.role)).toEqual(["assistant", "tool", "tool"])
+    expect(out[0].content).toBe("")
+    expect(out[0].tool_calls).toHaveLength(2)
+  })
+
+  it("retombe sur du texte quand le modèle ne gère pas les outils", () => {
+    const out = toModelMessages([{ ...bot("Prêt."), files: [{ id: "1", name: "a.py", lang: "py", content: "x = 1" }] }], false)
+    expect(out).toHaveLength(1)
+    expect(out[0].tool_calls).toBeUndefined()
+    expect(out[0].content).toContain("x = 1")
+  })
+
+  it("ne rejoue pas comme appel d'outil un fichier tiré d'un bloc de code déjà dans le texte", () => {
+    const code = "print(1)"
+    const out = toModelMessages([{ ...bot("Voici :\n```python\n" + code + "\n```"), files: [{ id: "1", name: "code-1.py", lang: "py", content: code + "\n" }] }], true)
+    expect(out).toHaveLength(1)
+    expect(out[0].tool_calls).toBeUndefined()
+    expect(out[0].content).toContain("[File created: code-1.py]")
+  })
+
+  it("les messages sans fichier ne changent pas", () => {
+    expect(toModelMessages([user("a"), bot("b")], true)).toEqual([{ role: "user", content: "a" }, { role: "assistant", content: "b" }])
+  })
+
+  it("compte les appels d'outil dans la taille de la requête", () => {
+    const withFile: M = { ...bot("ok"), files: [{ id: "1", name: "a.py", lang: "py", content: "y".repeat(500) }] }
+    expect(modelMessagesChars(toModelMessages([withFile], true))).toBeGreaterThan(500)
+    expect(requestChars([withFile], undefined, 0, true)).toBeGreaterThan(requestChars([bot("ok")], undefined, 0, true) + 500)
+  })
+
+  it("compte le contenu des fichiers dans la taille de la requête", () => {
+    const withFile: M = { ...bot("ok"), files: [{ id: "1", name: "a.py", lang: "py", content: "y".repeat(500) }] }
+    expect(requestChars([withFile], undefined, 0)).toBeGreaterThan(500)
   })
 
   it("visibleThread ne renvoie que les messages non résumés et non informatifs", () => {

@@ -236,4 +236,23 @@ const customFromUser: PromptVariant = {
 
 export const ROUND_5: PromptVariant[] = [customNone, customPlain, customFirst, customUnless, customFromUser]
 
-export const VARIANTS: Record<string, PromptVariant> = Object.fromEntries([...ROUND_1, ...ROUND_2, ...ROUND_3, ...ROUND_4, ...ROUND_5, PRODUCTION].map(v => [v.id, v]))
+// ---------- Historique avec fichiers : comment rejouer ce que le modèle a écrit ----------
+const historyVariant = (style: "names" | "text" | "native", label: string): PromptVariant => ({
+  id: `hist-${style}`, label, build: ctx => buildSystemPrompt(ctx), tool: CREATE_FILE_TOOL, history: style
+})
+const EDIT_HINT = "To change an existing file, call create_file again with the file's complete updated content."
+const historyTextHint: PromptVariant = {
+  id: "hist-text-consigne",
+  label: "Contenu en texte + consigne : pour modifier un fichier, le réécrire en entier avec l'outil",
+  build: ctx => (ctx.useTools ? `${buildSystemPrompt(ctx)}\n${EDIT_HINT}` : buildSystemPrompt(ctx)),
+  tool: CREATE_FILE_TOOL,
+  history: "text"
+}
+export const ROUND_6: PromptVariant[] = [
+  historyVariant("names", "Comportement d'origine : seuls les noms des fichiers sont rappelés"),
+  historyVariant("text", "Le contenu des fichiers est ajouté au texte du message de l'assistant"),
+  historyVariant("native", "Appels d'outil rejoués au format natif d'Ollama (tool_calls + message tool)"),
+  historyTextHint
+]
+
+export const VARIANTS: Record<string, PromptVariant> = Object.fromEntries([...ROUND_1, ...ROUND_2, ...ROUND_3, ...ROUND_4, ...ROUND_5, ...ROUND_6, PRODUCTION].map(v => [v.id, v]))

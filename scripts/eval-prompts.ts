@@ -1,5 +1,5 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
-import { CASES, CUSTOM_CASES, EVAL_MODEL, EVAL_NOW, gradeReply, HELD_OUT_CASES, makeReply } from "../src/eval/cases"
+import { CASES, CUSTOM_CASES, EVAL_MODEL, FILE_CASES, EVAL_NOW, gradeReply, HELD_OUT_CASES, makeReply } from "../src/eval/cases"
 import { markdownReport, summarize, worstCases } from "../src/eval/report"
 import { ollamaChat, runAll, type RunOptions } from "../src/eval/runner"
 import { runSummaryTrial, SUMMARY_CASES, SUMMARY_VARIANTS, summarizeSummaryTrials, summaryMarkdown, type SummaryTrial } from "../src/eval/summary"
@@ -21,7 +21,7 @@ const baseUrl = a.url ?? "http://localhost:11434"
 const model = a.model ?? EVAL_MODEL
 const ids = (a.variants ?? Object.keys(VARIANTS).join(",")).split(",").filter(Boolean)
 const variants = suite === "summary" ? [] : ids.map(id => VARIANTS[id] ?? (() => { throw new Error(`Variante inconnue : ${id} (disponibles : ${Object.keys(VARIANTS).join(", ")})`) })())
-const pool = a.custom === "true" ? CUSTOM_CASES : a["held-out"] === "true" ? HELD_OUT_CASES : CASES
+const pool = a.files === "true" ? FILE_CASES : a.custom === "true" ? CUSTOM_CASES : a["held-out"] === "true" ? HELD_OUT_CASES : CASES
 const cases = a.cases ? pool.filter(c => a.cases.split(",").some(p => c.id.startsWith(p))) : pool
 
 function printReport(results: TrialResult[]) {
@@ -67,7 +67,7 @@ function regrade(file: string): TrialResult[] {
   const env = { now: EVAL_NOW, model }
   return readFileSync(file, "utf8").split("\n").filter(Boolean).map(line => {
     const t = JSON.parse(line) as TrialResult
-    const testCase = [...CASES, ...HELD_OUT_CASES, ...CUSTOM_CASES].find(c => c.id === t.caseId)
+    const testCase = [...CASES, ...HELD_OUT_CASES, ...CUSTOM_CASES, ...FILE_CASES].find(c => c.id === t.caseId)
     if (!testCase || t.error) return t
     const checks = gradeReply(testCase, makeReply({ content: t.content, toolCalls: t.toolCalls }), env)
     return { ...t, checks, pass: Object.values(checks).every(Boolean) }

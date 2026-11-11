@@ -1,6 +1,6 @@
 import { words } from "../lib/language"
 import { countBullets, countSentences, dateForms, fenceReport, hasValidTable, hedges, includesAll, includesAny, languageMatches } from "./graders"
-import type { EvalCase, EvalEnv, Reply } from "./types"
+import type { EvalCase, EvalEnv, Reply, ThreadMessage } from "./types"
 
 // Date fixe des essais : les réponses attendues (date, jour) ne dépendent pas du jour où on lance l'évaluation
 export const EVAL_NOW = new Date(2026, 10, 11, 14, 32)
@@ -439,6 +439,111 @@ export const CUSTOM_CASES: EvalCase[] = [
     bad: { content: "A CPU is the processor of a computer." }
   }
 ]
+
+// ---------------------------------------------------------------------------------------------------------------
+// Suivi de fichiers : le modèle retrouve-t-il ce qu'il a écrit dans un fichier créé plus tôt dans la conversation ?
+// Le contenu de ces fichiers n'apparaît dans aucun message de l'utilisateur : seul l'historique rejoué peut le donner.
+// ---------------------------------------------------------------------------------------------------------------
+const file = (name: string, lang: string, content: string) => ({ id: `f-${name}`, name, lang, content })
+const TVA = file("tva.py", "py", "TAUX_TVA = 0.2\n\n\ndef prix_ttc(prix_ht):\n    return round(prix_ht * (1 + TAUX_TVA), 2)\n")
+const tvaThread = (question: string): ThreadMessage[] => [
+  { role: "user", content: "Crée un fichier tva.py qui calcule le prix TTC à partir d'un prix HT." },
+  { role: "assistant", content: "tva.py est prêt.", files: [TVA] },
+  { role: "user", content: question }
+]
+const noLabelEcho = (r: Reply) => !/\[(File created|Fichiers? créés?)/i.test(r.content)
+const rewriteChecks = (r: Reply, prefix: string, needles: string[]) => {
+  const calls = r.toolCalls.filter(c => c.name === "create_file")
+  const args = calls[0]?.args ?? {}
+  const content = typeof args.content === "string" ? args.content : ""
+  return {
+    "appelle create_file": calls.length >= 1,
+    "même fichier": typeof args.filename === "string" && args.filename.startsWith(prefix),
+    "contenu complet et à jour": includesAll(content, needles),
+    "n'imite pas l'étiquette de l'historique": noLabelEcho(r)
+  }
+}
+
+export const FILE_CASES: EvalCase[] = [
+  {
+    id: "suivi-lecture", category: "suivi-fichier", lang: "fr", tools: true, messages: [], thread: tvaThread("Quel taux de TVA utilise tva.py ?"),
+    grade: r => ({ "donne le taux du fichier": includesAny(r.content, ["0.2", "0,2", "20"]), "répond sans recréer le fichier": r.toolCalls.length === 0, "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "tva.py utilise un taux de 20 % (TAUX_TVA = 0.2)." }, bad: { content: "Il utilise un taux de 7 %." }
+  },
+  {
+    id: "suivi-modif", category: "suivi-fichier", lang: "fr", tools: true, messages: [], thread: tvaThread("Modifie tva.py pour que le taux soit de 5,5 % au lieu de 20 %."),
+    grade: r => rewriteChecks(r, "tva", ["0.055", "def prix_ttc"]),
+    good: { content: "Fait.", toolCalls: [call("create_file", { filename: "tva.py", content: "TAUX_TVA = 0.055\n\n\ndef prix_ttc(prix_ht):\n    return round(prix_ht * (1 + TAUX_TVA), 2)\n" })] },
+    bad: { content: "Fait.", toolCalls: [call("create_file", { filename: "tva.py", content: "TAUX_TVA = 0.055\n" })] }
+  },
+  {
+    id: "suivi-ajout", category: "suivi-fichier", lang: "fr", tools: true, messages: [], thread: tvaThread("Ajoute à tva.py une fonction prix_ht(prix_ttc) qui fait l'inverse."),
+    grade: r => rewriteChecks(r, "tva", ["def prix_ttc", "def prix_ht", "TAUX_TVA"]),
+    good: { content: "Fait.", toolCalls: [call("create_file", { filename: "tva.py", content: "TAUX_TVA = 0.2\n\n\ndef prix_ttc(prix_ht):\n    return round(prix_ht * (1 + TAUX_TVA), 2)\n\n\ndef prix_ht(prix_ttc):\n    return round(prix_ttc / (1 + TAUX_TVA), 2)\n" })] },
+    bad: { content: "Fait.", toolCalls: [call("create_file", { filename: "tva.py", content: "def prix_ht(prix_ttc):\n    return prix_ttc / 1.2\n" })] }
+  },
+  {
+    id: "suivi-json", category: "suivi-fichier", lang: "fr", tools: true, messages: [],
+    thread: [
+      { role: "user", content: "Crée un fichier config.json avec un port et un mode debug." },
+      { role: "assistant", content: "", files: [file("config.json", "json", "{\"port\": 8081, \"debug\": false}\n")] },
+      { role: "user", content: "Quel port est configuré dans config.json ?" }
+    ],
+    grade: r => ({ "donne le port du fichier": includesAny(r.content, ["8081"]), "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "Le port configuré est 8081." }, bad: { content: "Le port configuré est 3000." }
+  },
+  {
+    id: "suivi-compte", category: "suivi-fichier", lang: "fr", tools: true, messages: [],
+    thread: [
+      { role: "user", content: "Fais-moi un fichier liste.txt avec des fruits." },
+      { role: "assistant", content: "liste.txt est créé.", files: [file("liste.txt", "txt", "pomme\nbanane\ncerise\nmangue\n")] },
+      { role: "user", content: "Combien de fruits y a-t-il dans liste.txt ?" }
+    ],
+    grade: r => ({ "compte juste": /\b(4|quatre)\b/i.test(r.content), "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "Il y a 4 fruits dans liste.txt." }, bad: { content: "Il y a 7 fruits." }
+  },
+  {
+    id: "suivi-lointain", category: "suivi-fichier", lang: "fr", tools: true, messages: [],
+    thread: [
+      { role: "user", content: "Crée un fichier data.csv avec des noms et des villes." },
+      { role: "assistant", content: "", files: [file("data.csv", "csv", "nom,ville\nAlice,Lyon\nMarc,Nantes\n")] },
+      { role: "user", content: "Merci. Au fait, quelle est la capitale du Japon ?" },
+      { role: "assistant", content: "La capitale du Japon est Tokyo." },
+      { role: "user", content: "Quelle est la ville de Marc dans data.csv ?" }
+    ],
+    grade: r => ({ "retrouve la ville": includesAny(r.content, ["nantes"]), "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "Marc habite à Nantes." }, bad: { content: "Marc habite à Paris." }
+  }
+]
+
+// Mêmes fichiers, mais la question ne cite ni nom de fichier ni le mot « fichier » : l'application n'envoie alors pas la liste d'outils
+FILE_CASES.push(
+  {
+    id: "suivi-sans-outil-taux", category: "suivi-fichier", lang: "fr", tools: false, messages: [], thread: tvaThread("Quel taux de TVA utilise ce script ?"),
+    grade: r => ({ "donne le taux du fichier": includesAny(r.content, ["0.2", "0,2", "20"]), "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "Ce script utilise un taux de 20 % (TAUX_TVA = 0.2)." }, bad: { content: "Il utilise un taux de 7 %." }
+  },
+  {
+    id: "suivi-sans-outil-compte", category: "suivi-fichier", lang: "fr", tools: false, messages: [],
+    thread: [
+      { role: "user", content: "Fais-moi une liste de fruits dans un fichier." },
+      { role: "assistant", content: "C'est fait.", files: [file("liste.txt", "txt", "pomme\nbanane\ncerise\nmangue\n")] },
+      { role: "user", content: "Combien d'éléments y a-t-il dans cette liste ?" }
+    ],
+    grade: r => ({ "compte juste": /\b(4|quatre)\b/i.test(r.content), "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "Il y a 4 éléments." }, bad: { content: "Il y a 6 éléments." }
+  },
+  {
+    id: "suivi-sans-outil-port", category: "suivi-fichier", lang: "fr", tools: false, messages: [],
+    thread: [
+      { role: "user", content: "Prépare une configuration avec un port et un mode debug dans un fichier." },
+      { role: "assistant", content: "", files: [file("config.json", "json", "{\"port\": 8081, \"debug\": false}\n")] },
+      { role: "user", content: "Quel port as-tu choisi ?" }
+    ],
+    grade: r => ({ "donne le port": includesAny(r.content, ["8081"]), "n'imite pas l'étiquette de l'historique": noLabelEcho(r) }),
+    good: { content: "J'ai choisi le port 8081." }, bad: { content: "J'ai choisi le port 3000." }
+  }
+)
 
 export function gradeReply(testCase: EvalCase, r: Reply, env: EvalEnv): Record<string, boolean> {
   return testCase.grade(r, env)

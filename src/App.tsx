@@ -14,7 +14,7 @@ import {
   DEFAULT_COMPACTION,
   estimatePromptTokens,
   isSettings as isCompactionSettings,
-  messageText,
+  toModelMessages,
   requestChars,
   shouldCompact,
   summaryInjection,
@@ -747,7 +747,7 @@ function App() {
       let calib = state.calib
       let tail = visibleThread(thread, summary?.upTo ?? 0)
       if (compaction.enabled) {
-        const estimate = estimatePromptTokens(requestChars(tail, summary, promptOverhead), tail.length, calib)
+        const estimate = estimatePromptTokens(requestChars(tail, summary, promptOverhead, info.tools), tail.length, calib)
         if (shouldCompact(estimate, effectiveCtx, compaction.threshold)) {
           setLoadingMessage("Compaction de la conversation…")
           const result = await runCompaction(convId, thread, summary, calib, info, controller.signal, true)
@@ -760,10 +760,10 @@ function App() {
         }
       }
       // Taille (en caractères) de ce qui est réellement envoyé : sert à calibrer l'estimation avec la mesure d'Ollama
-      const sentChars = requestChars(tail, summary, promptOverhead)
+      const sentChars = requestChars(tail, summary, promptOverhead, info.tools)
 
       // On n'envoie que role/content à Ollama (stats exclues) ; les fichiers créés sont rappelés au modèle
-      const history = tail.map(m => ({ role: m.role, content: messageText(m) }))
+      const history = toModelMessages(tail, info.tools)
       const systemContent = [systemPrompt, summary ? summaryInjection(summary) : ""].filter(Boolean).join("\n\n")
 
       // Les modèles « réfléchisseurs » épuisent parfois leur limite de tokens en pensant, sans rien répondre.

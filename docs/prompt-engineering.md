@@ -192,6 +192,30 @@ et son habitude de vouvoyer pèsent plus lourd que la consigne.
 Choix de conception : le texte est normalisé (retours à la ligne, plafond), il compte dans l'estimation de la fenêtre de
 contexte, et le prompt reste identique d'un message à l'autre tant que le texte ne change pas (cache de préfixe conservé).
 
+### 10. Le modèle doit relire ce qu'il a écrit dans ses fichiers
+
+Quand le modèle crée un fichier avec l'outil `create_file`, son contenu n'apparaît dans aucun message affiché : l'historique
+rejoué au message suivant ne contenait **que le nom** du fichier (`[Fichiers créés : tva.py]`). Le modèle ne pouvait donc
+ni répondre « que contient ce fichier ? » ni le modifier sans le réécrire de mémoire. Six conversations à plusieurs tours,
+dont le contenu des fichiers n'est dans aucun message de l'utilisateur (taux d'un fichier `tva.py`, port d'un
+`config.json`, ajout d'une fonction sans écraser les autres, information retrouvée après un échange sans rapport…) :
+
+| Historique rejoué | Réussite [IC 95 %] |
+|---|---|
+| Noms seuls (comportement d'origine) | **11 %** [4–25] |
+| Contenu ajouté au texte du message | 75 % [65–83] |
+| **Appel d'outil rejoué au format natif d'Ollama** (`tool_calls` + message `tool`) — retenu | **92 %** [84–96] |
+
+Le format natif est significativement meilleur que le texte (compter les éléments d'un fichier : 8/8 contre 4/8 ; retrouver une
+information plus loin dans la conversation : 8/8 contre 5/8), y compris quand la question ne déclenche pas l'outil et que la
+requête est envoyée **sans liste d'outils** (94 % contre 56 %). Une consigne supplémentaire (« pour modifier un fichier, le
+réécrire en entier ») n'a rien changé (81 % des deux côtés).
+
+Choix de conception : le format natif n'est utilisé que si le modèle gère les outils ; sinon, et pour les fichiers déjà visibles
+dans le texte du message (blocs de code transformés en fichiers), le contenu est ajouté en texte. Un fichier de plus de
+8 000 caractères est tronqué au milieu (début, fin et nombre de lignes omises) pour ne pas saturer la fenêtre de contexte, et
+la taille de ces appels est comptée dans l'estimation qui déclenche la compaction.
+
 ## Résultats finaux (température 0,2)
 
 Évaluation du **code réel de l'application** (`production`), contre le comportement d'origine :
@@ -238,6 +262,7 @@ visible. Coût du prompt : **~86 tokens**, soit environ 0,5 % d'une fenêtre de 
 npm run eval:prompts -- --variants reference,production --samples 3          # cas de conception
 npm run eval:prompts -- --held-out true --variants reference,production --samples 3 --seed 5000
 npm run eval:prompts -- --suite summary --variants actuel,adaptatif --samples 5   # compaction
+npm run eval:prompts -- --files true --variants hist-names,hist-text,hist-native --samples 8 # suivi des fichiers créés
 npm run eval:prompts -- --regrade resultats.jsonl                              # re-noter sans réinterroger le modèle
 ```
 

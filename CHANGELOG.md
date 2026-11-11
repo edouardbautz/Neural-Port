@@ -5,6 +5,9 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+### Corrigé
+- **Le modèle relit maintenant ce qu'il a écrit dans ses fichiers.** Avant, seul le *nom* d'un fichier créé par l'outil était rappelé au message suivant : le modèle ne pouvait ni en citer le contenu ni le modifier correctement. L'appel `create_file` est désormais rejoué dans l'historique, avec son contenu, au format natif d'Ollama (modèles avec outils ; texte sinon). Mesuré sur 6 conversations à plusieurs tours : 11 % → 92 % de réussite. Les fichiers très longs (> 8 000 caractères) sont tronqués au milieu.
+
 ## [0.2.0] - 2026-11-11
 
 ### Instructions personnalisées
