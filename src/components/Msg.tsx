@@ -76,7 +76,7 @@ function CodeBlock({ children, onSave }: { children?: ReactNode; onSave?: (code:
   return (
     <div className="not-prose my-4 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-xs">
       <div className="flex items-center justify-between gap-3 px-3.5 py-1.5 bg-zinc-100 dark:bg-zinc-800 border-b border-zinc-200 dark:border-zinc-800">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 dark:text-zinc-500 select-none">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-400 select-none">
           {lang ?? "code"}
         </span>
         <div className="flex items-center gap-3">
@@ -84,21 +84,21 @@ function CodeBlock({ children, onSave }: { children?: ReactNode; onSave?: (code:
             <button
               onClick={handleSave}
               disabled={saved}
-              className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer disabled:cursor-default disabled:hover:text-zinc-400"
+              className="px-1.5 py-2 -my-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer disabled:cursor-default disabled:hover:text-zinc-600 dark:disabled:hover:text-zinc-400"
             >
               {saved ? "Fichier créé" : "Créer un fichier"}
             </button>
           )}
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-1.5 py-2 -my-1 text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
             {copied ? "Copié" : "Copier"}
           </button>
         </div>
       </div>
-      <pre className="overflow-x-auto p-3.5 text-[13px] leading-relaxed">
+      <pre tabIndex={0} role="region" aria-label={`Code ${lang ?? ""}`.trim()} className="overflow-x-auto p-3.5 text-[13px] leading-relaxed">
         {children}
       </pre>
     </div>
@@ -164,12 +164,12 @@ function Msg({ role, content, thinking, approx, tps, duration, tokens, files, on
             onClick={() => { setDraft(content); setEditing(true) }}
             title="Modifier le message"
             aria-label="Modifier le message"
-            className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 opacity-0 group-hover/user:opacity-100 focus:opacity-100 transition-all cursor-pointer"
+            className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 opacity-0 group-hover/user:opacity-100 focus:opacity-100 transition-all cursor-pointer"
           >
             <PencilIcon />
           </button>
         )}
-        <p className="max-w-[72%] px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-500 dark:bg-indigo-600 text-white text-sm leading-relaxed whitespace-pre-wrap">
+        <p className="max-w-[72%] min-w-0 px-4 py-2.5 rounded-2xl rounded-br-sm bg-indigo-500 dark:bg-indigo-600 text-white text-sm leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]">
           {content}
         </p>
       </div>
@@ -179,19 +179,19 @@ function Msg({ role, content, thinking, approx, tps, duration, tokens, files, on
   return (
     <div className="flex flex-col items-start gap-1.5 msg-in group/msg">
       {content.length > 0 || isStreaming ? (
-      <div className={`relative max-w-[80%] px-4 py-3 rounded-2xl rounded-tl-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm transition-shadow${isStreaming ? " streaming-bubble" : ""}`}>
+      <div className={`relative max-w-[80%] min-w-0 [overflow-wrap:anywhere] px-4 py-3 rounded-2xl rounded-tl-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm transition-shadow${isStreaming ? " streaming-bubble" : ""}`}>
         {!isStreaming && (
           <button
             onClick={handleCopy}
             aria-label="Copier la réponse"
-            className="absolute -top-2.5 -right-2.5 w-7 h-7 rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-sm flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 transition-all opacity-0 group-hover/msg:opacity-100 focus:opacity-100 cursor-pointer"
+            className="absolute -top-2.5 -right-2.5 w-7 h-7 rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 shadow-sm flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-all opacity-0 group-hover/msg:opacity-100 focus:opacity-100 cursor-pointer"
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
           </button>
         )}
         {thinking && (
           <details className="group/think mb-3 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950/50">
-            <summary className="cursor-pointer select-none px-3 py-1.5 text-[11px] font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors">
+            <summary className="cursor-pointer select-none px-3 py-1.5 text-[11px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors">
               Réflexion du modèle
             </summary>
             <p className="max-h-60 overflow-y-auto px-3 pb-3 pt-1 text-xs leading-relaxed italic whitespace-pre-wrap text-zinc-500 dark:text-zinc-400">
@@ -233,13 +233,13 @@ function Msg({ role, content, thinking, approx, tps, duration, tokens, files, on
             >
               <span aria-hidden>📄</span>
               {f.name}
-              <span className="text-zinc-400 dark:text-zinc-500">↓</span>
+              <span className="text-zinc-600 dark:text-zinc-400">↓</span>
             </button>
           ))}
         </div>
       )}
       {!isStreaming && (stats.length > 0 || onRegenerate) && (
-        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-[11px] leading-none text-zinc-400 dark:text-zinc-500 tabular-nums">
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-1 text-[11px] leading-none text-zinc-600 dark:text-zinc-400 tabular-nums">
           {stats.map((s, i) => (
             <span key={i} title={s.hint} className="flex items-center gap-x-1.5">
               {i > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
@@ -249,7 +249,7 @@ function Msg({ role, content, thinking, approx, tps, duration, tokens, files, on
           {onRegenerate && (
             <button
               onClick={onRegenerate}
-              className="flex items-center gap-1 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
+              className="flex items-center gap-1 px-1.5 py-2 -my-1.5 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors cursor-pointer"
             >
               {stats.length > 0 && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
               <RefreshIcon />

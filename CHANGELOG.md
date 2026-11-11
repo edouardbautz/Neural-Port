@@ -5,7 +5,17 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+### Accessibilité
+- Contrastes de texte conformes WCAG AA en thème clair et sombre (vérifié avec axe-core : aucune violation sur téléphone, tablette et bureau).
+- Repères de page (`main`, titre `h1`, navigation et panneaux nommés), pilotage au clavier du menu des modèles (flèches, Échap, retour du focus), Échap ferme les panneaux et la liste mobile, zones de code accessibles au clavier, annonces d'état pour les lecteurs d'écran.
+- Cibles tactiles agrandies et nom accessible du sélecteur de modèle aligné sur son texte visible.
+
+### Corrigé
+- Les mots très longs sans espace (URL, chemins) ne débordent plus des bulles de message.
+- Un appel d'outil mal formé dans le flux d'Ollama ne fait plus ignorer silencieusement tout le fragment.
+
 ### Modifié
+- Le traitement du flux d'Ollama, le client de l'API, l'historique et la connexion sont extraits dans des modules et hooks testés (95 tests, dont les hooks sous jsdom).
 - Mise à jour des dépendances : React 19.3, Tailwind CSS 4.3, ESLint 10, Vite 8 et `@vitejs/plugin-react` 6 (Node 20.19+ ou 22.12+ requis).
 - Actions GitHub `checkout` et `setup-node` en version 7.
 

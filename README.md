@@ -88,9 +88,10 @@ Stack : React 19, TypeScript, Vite, Tailwind CSS 4, react-markdown, Vitest.
 
 ```
 src/
-├── App.tsx            état de l'application, communication avec Ollama
+├── App.tsx            assemblage de l'interface et orchestration d'une réponse
 ├── components/        interface (messages, barre latérale, paramètres, fichiers…)
-└── lib/               logique pure et testée (compaction, fichiers, historique, Markdown…)
+├── hooks/             état persistant et connexion à Ollama (useHistory, useOllamaConnection)
+└── lib/               logique pure et testée (flux Ollama, compaction, fichiers, historique, Markdown…)
 ```
 
 ## Contribuer

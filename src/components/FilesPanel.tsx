@@ -31,10 +31,10 @@ function FilesPanel({ files, onClose }: FilesPanelProps) {
   const selected = files.find(f => f.id === selectedId) ?? null
 
   return (
-    <aside className="fixed inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:z-auto shrink-0 flex flex-col border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 msg-in">
+    <aside aria-label="Fichiers générés" className="fixed inset-y-0 right-0 z-30 w-full sm:w-96 lg:static lg:z-auto shrink-0 flex flex-col border-l border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 msg-in">
       <div className="shrink-0 flex items-center justify-between px-4 h-14 border-b border-zinc-200 dark:border-zinc-800">
         <span className="text-sm font-semibold">
-          Fichiers générés <span className="text-zinc-400 dark:text-zinc-500 font-normal">({files.length})</span>
+          Fichiers générés <span className="text-zinc-600 dark:text-zinc-400 font-normal">({files.length})</span>
         </span>
         <button
           onClick={onClose}
@@ -57,17 +57,17 @@ function FilesPanel({ files, onClose }: FilesPanelProps) {
                 onClick={() => setSelectedId(file.id === selectedId ? null : file.id)}
                 className="flex-1 min-w-0 flex items-center gap-2 text-left cursor-pointer"
               >
-                <span className="text-zinc-400 dark:text-zinc-500"><FileIcon /></span>
+                <span className="text-zinc-600 dark:text-zinc-400"><FileIcon /></span>
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{file.name}</span>
-                  <span className="block text-[11px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+                  <span className="block text-[11px] text-zinc-600 dark:text-zinc-400 uppercase tracking-wider">
                     {file.lang} · {file.content.split("\n").length - 1} lignes
                   </span>
                 </span>
               </button>
               <button
                 onClick={() => downloadFile(file)}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-indigo-500 hover:bg-white dark:hover:bg-zinc-700 transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-indigo-500 hover:bg-white dark:hover:bg-zinc-700 transition-colors cursor-pointer"
                 aria-label={`Télécharger ${file.name}`}
                 title="Télécharger"
               >
@@ -79,7 +79,7 @@ function FilesPanel({ files, onClose }: FilesPanelProps) {
       </ul>
 
       {selected && (
-        <pre className="flex-1 min-h-0 overflow-auto p-3.5 text-[12px] leading-relaxed bg-zinc-50 dark:bg-zinc-950 text-zinc-800 dark:text-zinc-200">
+        <pre tabIndex={0} role="region" aria-label={`Contenu de ${selected.name}`} className="flex-1 min-h-0 overflow-auto p-3.5 text-[12px] leading-relaxed bg-zinc-50 dark:bg-zinc-950 text-zinc-800 dark:text-zinc-200">
           <code>{selected.content}</code>
         </pre>
       )}

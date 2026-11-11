@@ -7,7 +7,7 @@ function fmt(n: number): string {
 // Repère affiché dans la conversation à l'endroit où les messages précédents ont été résumés
 function CompactionDivider({ summary }: { summary: ConversationSummary }) {
   return (
-    <details className="group/compact my-1 text-[11px] text-zinc-400 dark:text-zinc-500">
+    <details className="group/compact my-1 text-[11px] text-zinc-600 dark:text-zinc-400">
       <summary className="flex cursor-pointer select-none items-center gap-3 list-none [&::-webkit-details-marker]:hidden hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors">
         <span className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800" />
         <span className="text-center">

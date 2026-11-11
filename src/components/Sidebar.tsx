@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { PencilIcon, PlusIcon, TrashIcon, XIcon } from "./icons"
 
 export interface ConversationMeta {
@@ -35,6 +35,16 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
 
+  // Sur mobile la liste recouvre la page : Échap la referme
+  useEffect(() => {
+    if (!open) return
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [open, onClose])
+
   const q = query.trim().toLowerCase()
   const visible = q
     ? conversations.filter(c => c.title.toLowerCase().includes(q) || c.messages?.some(m => m.content.toLowerCase().includes(q)))
@@ -50,7 +60,8 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
       {/* Voile de fond sur mobile (sidebar en overlay) */}
       {open && <div className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={onClose} />}
 
-      <aside
+      <nav
+        aria-label="Conversations"
         className={`${open ? "flex" : "hidden"} md:flex fixed md:static inset-y-0 left-0 z-40 md:z-auto w-64 shrink-0 flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800`}
       >
         <div className="shrink-0 p-3 flex items-center gap-1">
@@ -78,7 +89,7 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
               onChange={e => setQuery(e.target.value)}
               placeholder="Rechercher…"
               aria-label="Rechercher dans les conversations"
-              className="w-full px-3 py-1.5 rounded-lg text-sm bg-zinc-100 dark:bg-zinc-800 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none focus:ring-1 focus:ring-indigo-400"
+              className="w-full px-3 py-1.5 rounded-lg text-sm bg-zinc-100 dark:bg-zinc-800 placeholder-zinc-500 dark:placeholder-zinc-400 outline-none focus:ring-1 focus:ring-indigo-400"
             />
           </div>
         )}
@@ -86,14 +97,14 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
         <div className="flex-1 overflow-y-auto px-2 pb-2">
           {conversations.length === 0 ? (
             <div className="px-3 py-8 text-center">
-              <p className="text-xs text-zinc-400 dark:text-zinc-500 leading-relaxed">
+              <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed">
                 Aucune conversation pour l'instant.
                 <br />
                 Vos échanges apparaîtront ici.
               </p>
             </div>
           ) : visible.length === 0 ? (
-            <p className="px-3 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">Aucun résultat pour « {query} »</p>
+            <p className="px-3 py-8 text-center text-xs text-zinc-600 dark:text-zinc-400">Aucun résultat pour « {query} »</p>
           ) : (
             <ul className="space-y-0.5">
               {visible.map((c) => {
@@ -124,7 +135,7 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
                       }`}
                     >
                       <span className="block text-sm truncate">{c.title}</span>
-                      <span className="block text-[11px] truncate text-zinc-400 dark:text-zinc-500">
+                      <span className="block text-[11px] truncate text-zinc-600 dark:text-zinc-400">
                         {[c.model, formatRelative(c.updatedAt)].filter(Boolean).join(" · ")}
                       </span>
                     </button>
@@ -134,7 +145,7 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
                       onClick={() => { setDraft(c.title); setRenamingId(c.id) }}
                       title="Renommer"
                       aria-label="Renommer la conversation"
-                      className="absolute right-9 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
+                      className="absolute right-9 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-200/60 dark:hover:bg-zinc-700/60 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
                     >
                       <PencilIcon />
                     </button>
@@ -143,7 +154,7 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
                       onClick={() => onDelete(c.id)}
                       title="Supprimer"
                       aria-label="Supprimer la conversation"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all cursor-pointer"
                     >
                       <TrashIcon />
                     </button>
@@ -153,7 +164,7 @@ function Sidebar({ conversations, activeId, open, onSelect, onNew, onDelete, onR
             </ul>
           )}
         </div>
-      </aside>
+      </nav>
     </>
   )
 }

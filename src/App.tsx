@@ -23,8 +23,11 @@ import {
 import { makeOllamaSummarizer } from './lib/summarize'
 import { ratioFrom, type Calibration } from './lib/tokens'
 import { downloadText, extensionFor, extractCodeBlocks, filenameFromRequest, isFileRequest, makeFile, type GeneratedFile } from './lib/files'
-import { exportFilename, exportHistory, mergeConversations, parseImport, sanitizeConversations } from './lib/history'
-import { DEFAULT_OLLAMA_URL, getOllamaUrl, loadSavedOllamaUrl, normalizeOllamaUrl, saveOllamaUrl, setOllamaUrl } from './lib/ollama'
+import { exportFilename, exportHistory, mergeConversations, parseImport } from './lib/history'
+import { finalStats, NO_THINK_TAGS, parseChatChunk, splitStreamLines, splitThinkTags, toolFiles, type ThinkTagState } from './lib/stream'
+import { useHistory } from './hooks/useHistory'
+import { useOllamaConnection } from './hooks/useOllamaConnection'
+import { checkModelLoaded, clearModelInfoCache, DEFAULT_OLLAMA_URL, getModelInfo, getOllamaUrl, loadSavedOllamaUrl, normalizeOllamaUrl, saveOllamaUrl, setOllamaUrl } from './lib/ollama'
 import { Fragment } from 'react'
 import { MenuIcon, SlidersIcon } from './components/icons'
 
@@ -41,13 +44,6 @@ export interface Message {
   files?: GeneratedFile[]  // fichiers créés par l'IA (outil create_file) ou depuis un bloc de code
 }
 
-export interface OllamaModelResponse {
-  models: {
-    name: string
-    model: string
-  }[]
-}
-
 export interface Conversation {
   id: string
   title: string
@@ -59,7 +55,6 @@ export interface Conversation {
   calib?: Calibration             // dernière mesure réelle de la taille du prompt (tokens Ollama / caractères envoyés)
 }
 
-const HISTORY_KEY = "neural-port-history"
 const CTX_KEY = "neural-port-ctx"
 const MODEL_KEY = "neural-port-model"
 const THINK_KEY = "neural-port-think"
@@ -77,16 +72,6 @@ const timestamp = () => Date.now()
 
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
-}
-
-async function checkModelLoaded(model: string): Promise<boolean> {
-  try {
-    const ps = await fetch(`${getOllamaUrl()}/api/ps`)
-    const data = (await ps.json()) as { models?: { name: string }[] }
-    return data.models?.some(m => m.name === model) ?? false
-  } catch {
-    return false
-  }
 }
 
 const SUGGESTIONS = [
@@ -113,35 +98,6 @@ const CREATE_FILE_TOOL = {
       },
       required: ["filename", "content"]
     }
-  }
-}
-
-// Capacités du modèle (Ollama refuse `tools` s'il ne le gère pas) et sa fenêtre de contexte maximale
-interface ModelInfo { tools: boolean; thinking: boolean; thinkLevels: boolean; maxCtx: number | null }
-const modelInfoCache = new Map<string, ModelInfo>()
-async function getModelInfo(model: string): Promise<ModelInfo> {
-  const cached = modelInfoCache.get(model)
-  if (cached) return cached
-  try {
-    const res = await fetch(`${getOllamaUrl()}/api/show`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model })
-    })
-    const data = (await res.json()) as { capabilities?: string[]; model_info?: Record<string, unknown>; details?: { family?: string } }
-    const key = Object.keys(data.model_info ?? {}).find(k => k.endsWith(".context_length"))
-    const max = key ? data.model_info![key] : null
-    const info: ModelInfo = {
-      tools: data.capabilities?.includes("tools") ?? false,
-      thinking: data.capabilities?.includes("thinking") ?? false,
-      // Seule la famille GPT-OSS honore les niveaux low/medium/high ; les autres n'ont qu'un on/off
-      thinkLevels: /gpt-?oss/i.test(`${model} ${data.details?.family ?? ""}`),
-      maxCtx: typeof max === "number" ? max : null
-    }
-    modelInfoCache.set(model, info)
-    return info
-  } catch {
-    return { tools: false, thinking: false, thinkLevels: false, maxCtx: null }
   }
 }
 
@@ -238,9 +194,6 @@ function App() {
   })
   const [liveThinking, setLiveThinking] = useState("")
   const [ollamaUrl, setOllamaUrlState] = useState(() => loadSavedOllamaUrl())
-  const [connection, setConnection] = useState<"checking" | "ok" | "down">("checking")
-  const [retrying, setRetrying] = useState(false)
-  const [storageFull, setStorageFull] = useState(false)
   const thinkBufferRef = useRef("")
   const [activeModel, setActiveModel] = useState<string | undefined>(() => {
     try {
@@ -250,20 +203,13 @@ function App() {
     }
   })
   const [modelStatus, setModelStatus] = useState<"idle" | "loading" | "ready" | "error">("idle")
+  // Ollama : état de la connexion et liste des modèles (le modèle mémorisé a pu être supprimé entre-temps)
+  const { modelList, connection, retrying, refresh: fetchModels, retry: retryConnection, reset: resetConnection } = useOllamaConnection(
+    ollamaUrl,
+    names => setActiveModel(current => (current && names.includes(current) ? current : undefined))
+  )
   const [inputValue, setInputValue] = useState("")
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY)
-      if (raw) {
-        const { conversations: loaded, repaired, skipped } = sanitizeConversations(JSON.parse(raw))
-        if (repaired > 0 || skipped > 0) console.warn(`Historique : ${repaired} conversation(s) réparée(s), ${skipped} élément(s) inutilisable(s) ignoré(s)`)
-        return loaded
-      }
-    } catch {
-      // Historique corrompu ou stockage indisponible : on repart de zéro
-    }
-    return []
-  })
+  const { conversations, setConversations, storageFull, getConversations } = useHistory()
   const [activeId, setActiveId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(ACTIVE_KEY)
@@ -281,13 +227,12 @@ function App() {
   const abortRef = useRef<AbortController | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isThinkingRef = useRef(false)
-  const thinkOpenIdxRef = useRef(-1)
-  const thinkCloseIdxRef = useRef(-1)
+  const thinkTagsRef = useRef<ThinkTagState>(NO_THINK_TAGS)
   const [isAtBottom, setIsAtBottom] = useState(true)
-  const [modelList, setModelList] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const modelButtonRef = useRef<HTMLButtonElement>(null)
 
   // Conversation active (ou aucune) — les messages affichés en dérivent
   const activeConv = conversations.find(c => c.id === activeId) ?? null
@@ -307,37 +252,7 @@ function App() {
     }
   }, [isDark])
 
-  // Persistance de l'historique et de la conversation active
-  // (écriture différée : pendant le streaming, `conversations` change à chaque fragment de texte)
-  // `dirtyRef` : seul un onglet qui a modifié l'historique l'écrit, sinon il écraserait celui d'un autre onglet
-  const conversationsRef = useRef(conversations)
-  const dirtyRef = useRef(false)
-  const loadedRef = useRef(conversations) // état lu au démarrage : tant qu'il n'a pas changé, rien à écrire
-  function saveHistory() {
-    if (!dirtyRef.current) return
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationsRef.current))
-      dirtyRef.current = false
-      setStorageFull(false)
-    } catch {
-      // Stockage plein ou bloqué : on le signale (bandeau) pour que l'utilisateur puisse exporter avant de tout perdre
-      setStorageFull(true)
-    }
-  }
-
-  useEffect(() => {
-    conversationsRef.current = conversations
-    if (conversations === loadedRef.current) return
-    dirtyRef.current = true
-    const timer = setTimeout(saveHistory, 400)
-    return () => clearTimeout(timer)
-  }, [conversations])
-
-  useEffect(() => {
-    window.addEventListener("pagehide", saveHistory)
-    return () => window.removeEventListener("pagehide", saveHistory)
-  }, [])
-
+  // Persistance de la conversation active (l'historique lui-même l'est par useHistory)
   useEffect(() => {
     try {
       if (activeId) localStorage.setItem(ACTIVE_KEY, activeId)
@@ -464,46 +379,6 @@ function App() {
     }
   }, [isLoading, isStreaming, activeModel])
 
-  // Liste des modèles installés ; sert aussi à savoir si Ollama répond
-  async function fetchModels(): Promise<boolean> {
-    const url = getOllamaUrl()
-    try {
-      const response = await fetch(`${url}/api/tags`)
-      if (!response.ok) throw new Error(`Ollama a répondu ${response.status}`)
-      const data = (await response.json()) as Partial<OllamaModelResponse>
-      if (url !== getOllamaUrl()) return false // l'adresse a changé pendant la requête
-      const names = Array.isArray(data.models) ? data.models.map(model => model.name) : []
-      setModelList(names)
-      // Le modèle mémorisé a pu être supprimé entre-temps
-      setActiveModel(current => (current && names.includes(current) ? current : undefined))
-      setConnection("ok")
-      return true
-    } catch (error) {
-      if (url !== getOllamaUrl()) return false
-      console.error("Impossible de contacter Ollama:", error)
-      setConnection("down")
-      return false
-    }
-  }
-
-  useEffect(() => {
-    const timer = setTimeout(() => void fetchModels(), 0)
-    return () => clearTimeout(timer)
-  }, [ollamaUrl])
-
-  // Ollama injoignable : on réessaie régulièrement, l'interface se rétablit toute seule dès qu'il répond
-  useEffect(() => {
-    if (connection !== "down") return
-    const id = setInterval(() => void fetchModels(), 5000)
-    return () => clearInterval(id)
-  }, [connection, ollamaUrl])
-
-  async function retryConnection() {
-    setRetrying(true)
-    await fetchModels()
-    setRetrying(false)
-  }
-
   // Applique une adresse saisie dans les Paramètres ; renvoie un message d'erreur si elle est invalide
   function changeOllamaUrl(input: string): string | null {
     const url = normalizeOllamaUrl(input)
@@ -511,23 +386,22 @@ function App() {
     if (url === ollamaUrl) return null
     setOllamaUrl(url)
     saveOllamaUrl(url)
-    modelInfoCache.clear()
-    setModelList([])
+    clearModelInfoCache()
+    resetConnection()
     setModelStatus("idle")
     setMaxCtx(null)
-    setConnection("checking")
     setOllamaUrlState(url)
     return null
   }
 
   function exportConversations() {
-    downloadText(exportFilename(), exportHistory(conversationsRef.current), "application/json;charset=utf-8")
+    downloadText(exportFilename(), exportHistory(getConversations()), "application/json;charset=utf-8")
   }
 
   function importConversations(text: string): { ok: boolean; message: string } {
     const parsed = parseImport(text)
     if (!parsed.ok) return { ok: false, message: parsed.error }
-    const { added } = mergeConversations(conversationsRef.current, parsed.result.conversations)
+    const { added } = mergeConversations(getConversations(), parsed.result.conversations)
     setConversations(prev => mergeConversations(prev, parsed.result.conversations).merged)
     const { conversations: found, repaired, skipped } = parsed.result
     const notes = [
@@ -890,8 +764,7 @@ function App() {
           setLiveThinking("")
           hasAssistantMsgRef.current = false
           isThinkingRef.current = false
-          thinkOpenIdxRef.current = -1
-          thinkCloseIdxRef.current = -1
+          thinkTagsRef.current = NO_THINK_TAGS
 
           const reader = response.body.getReader()
           const decoder = new TextDecoder()
@@ -902,38 +775,26 @@ function App() {
             const { done, value } = await reader.read()
 
             // À la fin du flux, la dernière ligne (sans retour à la ligne) est traitée aussi
-            const parts = (carry + (done ? decoder.decode() : decoder.decode(value, { stream: true }))).split('\n')
-            carry = done ? "" : (parts.pop() ?? "")
-            const lines = parts.filter(line => line.trim())
+            const split = splitStreamLines(carry, done ? decoder.decode() : decoder.decode(value, { stream: true }), done)
+            carry = split.carry
 
-            for (const line of lines) {
+            for (const line of split.lines) {
               if (overthought) break
               try {
-                const chunk = JSON.parse(line) as {
-                  message?: {
-                    content: string
-                    thinking?: string
-                    tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[]
-                  }
-                  error?: string
-                  done?: boolean
-                  eval_count?: number
-                  prompt_eval_count?: number
-                  eval_duration?: number
-                }
+                const chunk = parseChatChunk(line)
+                if (!chunk) continue
 
                 if (chunk.error) failure = chunk.error
 
                 if (chunk.done) {
                   // Valeurs réelles renvoyées par Ollama à la fin du stream.
                   // On ne les garde que si elles sont présentes : jamais inventées.
-                  const ctxUsed = (chunk.prompt_eval_count ?? 0) + (chunk.eval_count ?? 0)
-                  if (chunk.prompt_eval_count && chunk.prompt_eval_count > 0) {
-                    const measured = { tokens: chunk.prompt_eval_count, chars: sentChars }
+                  const stats = finalStats(chunk, carriedTokens, carriedSec)
+                  const { ctxUsed, tokens, seconds: sec } = stats
+                  if (stats.promptTokens !== null) {
+                    const measured = { tokens: stats.promptTokens, chars: sentChars }
                     updateConversation(convId, c => ({ ...c, calib: measured }))
                   }
-                  const tokens = chunk.eval_count ? chunk.eval_count + carriedTokens : undefined
-                  const sec = (chunk.eval_duration ?? 0) / 1e9 + carriedSec
                   if (tokens && tokens > 0 && sec > 0) {
                     updateMessages(convId, prev => {
                       const last = prev[prev.length - 1]
@@ -947,9 +808,9 @@ function App() {
 
                 const hasThinking = !!chunk.message?.thinking
                 const hasContent = !!chunk.message?.content
-                const toolCalls = chunk.message?.tool_calls ?? []
+                const files = toolFiles(chunk.message?.tool_calls)
 
-                if (!hasThinking && !hasContent && toolCalls.length === 0) continue
+                if (!hasThinking && !hasContent && !chunk.message?.tool_calls?.length) continue
 
                 if (firstChunk) {
                   setIsLoading(false)
@@ -958,9 +819,7 @@ function App() {
                 }
 
                 // Appels de l'outil create_file : on ignore tout ce qui est mal formé
-                for (const call of toolCalls) {
-                  const { filename, content } = call.function.arguments ?? {}
-                  if (call.function.name !== "create_file" || typeof filename !== "string" || typeof content !== "string" || !filename.trim() || !content.trim()) continue
+                for (const { filename, content } of files) {
                   if (!hasAssistantMsgRef.current) {
                     updateMessages(convId, prev => [...prev, { role: "assistant", content: "" }])
                     hasAssistantMsgRef.current = true
@@ -974,7 +833,7 @@ function App() {
                 }
 
                 if (hasThinking) {
-                  thinkBufferRef.current += chunk.message!.thinking
+                  thinkBufferRef.current += chunk.message?.thinking ?? ""
                   setLiveThinking(thinkBufferRef.current)
                   // Un petit modèle peut réfléchir pendant des minutes sur une question simple : on coupe et on relance sans réflexion
                   if (canOverthink && !rawBufferRef.current && thinkBufferRef.current.length > budget!) {
@@ -989,31 +848,11 @@ function App() {
                 }
 
                 if (hasContent) {
-                  rawBufferRef.current += chunk.message!.content
-                  const raw = rawBufferRef.current
-
-                  if (thinkOpenIdxRef.current === -1)
-                    thinkOpenIdxRef.current = raw.indexOf('<think>')
-                  if (thinkOpenIdxRef.current !== -1 && thinkCloseIdxRef.current === -1)
-                    thinkCloseIdxRef.current = raw.indexOf('</think>')
-
-                  const thinkOpenIdx = thinkOpenIdxRef.current
-                  const thinkCloseIdx = thinkCloseIdxRef.current
-                  const beforeThink = thinkOpenIdx > 0 ? raw.slice(0, thinkOpenIdx) : ''
-
-                  let displayContent: string
-                  let tagThinking: boolean
-
-                  if (thinkOpenIdx === -1) {
-                    displayContent = raw
-                    tagThinking = false
-                  } else if (thinkCloseIdx === -1) {
-                    displayContent = beforeThink
-                    tagThinking = true
-                  } else {
-                    displayContent = beforeThink + raw.slice(thinkCloseIdx + '</think>'.length).trimStart()
-                    tagThinking = false
-                  }
+                  rawBufferRef.current += chunk.message?.content ?? ""
+                  const tags = splitThinkTags(rawBufferRef.current, thinkTagsRef.current)
+                  thinkTagsRef.current = tags.state
+                  const displayContent = tags.display
+                  const tagThinking = tags.inTag
 
                   if (!tagThinking && isThinkingRef.current) {
                     isThinkingRef.current = false
@@ -1138,15 +977,15 @@ function App() {
           >
             <MenuIcon />
           </button>
-          <span className="font-sans text-sm font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
+          <h1 className="font-sans text-sm font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
             Neural-Port
-          </span>
+          </h1>
         </div>
         <div className="flex items-center gap-1">
         <button
           onClick={() => setSettingsOpen(o => !o)}
           aria-label="Paramètres"
-          className={`w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer ${settingsOpen ? "text-indigo-500" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100"}`}
+          className={`w-9 h-9 rounded-full flex items-center justify-center hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors cursor-pointer ${settingsOpen ? "text-indigo-600 dark:text-indigo-400" : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-100"}`}
         >
           <SlidersIcon />
         </button>
@@ -1160,10 +999,12 @@ function App() {
         </div>
       </header>
 
+      <main className="flex-1 min-h-0 flex flex-col">
+
       {storageFull && (
         <div role="alert" className="shrink-0 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 py-2 text-xs bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300 border-b border-red-200 dark:border-red-500/30">
           <span>Le stockage du navigateur est plein : tes conversations ne sont plus sauvegardées. Exporte-les, puis supprime les anciennes.</span>
-          <button onClick={exportConversations} className="font-semibold underline underline-offset-2 cursor-pointer">Exporter</button>
+          <button onClick={exportConversations} className="px-2 py-1.5 font-semibold underline underline-offset-2 cursor-pointer">Exporter</button>
         </div>
       )}
 
@@ -1174,10 +1015,10 @@ function App() {
             S'il tourne ailleurs ou refuse la connexion, règle son adresse dans les Paramètres (voir le README pour <code>OLLAMA_ORIGINS</code>).
           </span>
           <span className="flex items-center gap-3">
-            <button onClick={retryConnection} disabled={retrying} className="font-semibold underline underline-offset-2 disabled:opacity-50 cursor-pointer disabled:cursor-wait">
+            <button onClick={retryConnection} disabled={retrying} className="px-2 py-1.5 font-semibold underline underline-offset-2 disabled:opacity-50 cursor-pointer disabled:cursor-wait">
               {retrying ? "Connexion…" : "Réessayer"}
             </button>
-            <button onClick={() => setSettingsOpen(true)} className="font-semibold underline underline-offset-2 cursor-pointer">Paramètres</button>
+            <button onClick={() => setSettingsOpen(true)} className="px-2 py-1.5 font-semibold underline underline-offset-2 cursor-pointer">Paramètres</button>
           </span>
         </div>
       )}
@@ -1186,6 +1027,7 @@ function App() {
         <div className="relative w-full max-w-3xl">
           <div
             ref={scrollContainerRef}
+            aria-busy={isStreaming}
             onWheel={handleWheel}
             onScroll={handleScroll}
             className="h-full overflow-y-auto px-4 py-8 flex flex-col gap-5"
@@ -1212,14 +1054,14 @@ function App() {
               </Fragment>
             ))}
             {(isLoading || isThinking) && (
-              <div className="flex justify-start msg-in">
+              <div className="flex justify-start msg-in" role="status">
                 <div className="flex items-center gap-2.5 px-4 py-3.5 rounded-2xl rounded-tl-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
                   <div className="flex items-center gap-1">
                     <span className="w-1.5 h-1.5 bg-zinc-300 dark:bg-zinc-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                     <span className="w-1.5 h-1.5 bg-zinc-300 dark:bg-zinc-600 rounded-full animate-bounce" style={{ animationDelay: '160ms' }} />
                     <span className="w-1.5 h-1.5 bg-zinc-300 dark:bg-zinc-600 rounded-full animate-bounce" style={{ animationDelay: '320ms' }} />
                   </div>
-                  <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                  <span className="text-xs text-zinc-600 dark:text-zinc-400">
                     {isLoading ? loadingMessage : "Réflexion en cours…"}
                   </span>
                   {isThinking && liveThinking && (
@@ -1232,10 +1074,10 @@ function App() {
             )}
             {messages.length === 0 && !isLoading && !isThinking && (
               <div className="flex-1 flex flex-col items-center justify-center text-center gap-2 py-16">
-                <span className="font-sans text-base font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
+                <span aria-hidden="true" className="font-sans text-base font-semibold tracking-widest uppercase bg-gradient-to-r from-indigo-500 to-violet-500 bg-clip-text text-transparent select-none">
                   Neural-Port
                 </span>
-                <p className="text-sm text-zinc-400 dark:text-zinc-500">
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
                   {connection === "down"
                     ? "Ollama n'est pas joignable pour l'instant"
                     : connection === "checking"
@@ -1248,7 +1090,7 @@ function App() {
                   <div className="mt-2 flex flex-col items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
                     <span>Installe-en un dans un terminal, puis actualise :</span>
                     <code className="px-2 py-1 rounded-md bg-zinc-100 dark:bg-zinc-800 select-all">ollama pull llama3.2:3b</code>
-                    <button onClick={retryConnection} disabled={retrying} className="mt-1 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer transition-colors">
+                    <button onClick={retryConnection} disabled={retrying} className="mt-1 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-50 cursor-pointer transition-colors">
                       {retrying ? "Actualisation…" : "Actualiser"}
                     </button>
                   </div>
@@ -1269,7 +1111,7 @@ function App() {
                     ))}
                   </div>
                 )}
-                <p className="mt-6 text-[11px] text-zinc-300 dark:text-zinc-700 select-none">
+                <p className="mt-6 text-[11px] text-zinc-500 dark:text-zinc-400 select-none">
                   Ctrl+K nouvelle conversation · Ctrl+, paramètres · Échap arrêter
                 </p>
               </div>
@@ -1294,7 +1136,7 @@ function App() {
         <div className="max-w-3xl mx-auto flex items-end gap-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl px-3 py-2 shadow-xs focus-within:border-zinc-300 dark:focus-within:border-zinc-700 transition-colors">
           <textarea
             ref={textareaRef}
-            className="flex-1 bg-transparent outline-none text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-600 resize-none max-h-[10lh] py-2 px-1 leading-relaxed"
+            className="flex-1 bg-transparent outline-none text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 dark:placeholder-zinc-400 resize-none max-h-[10lh] py-2 px-1 leading-relaxed"
             placeholder={activeModel ? `Message à ${activeModel}…` : "Sélectionnez un modèle"}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
@@ -1310,9 +1152,11 @@ function App() {
                   setIsPopupOpen(!isPopupOpen)
                 }}
                 disabled={busy}
-                aria-label="Choisir le modèle"
+                ref={modelButtonRef}
+                aria-label={`${activeModel ?? "Modèle"} – choisir un autre modèle`}
                 aria-haspopup="listbox"
-                className="h-8 px-3 rounded-lg text-xs font-medium text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-1"
+                aria-expanded={isPopupOpen}
+                className="h-8 px-3 rounded-lg text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 flex items-center gap-1"
               >
                 {activeModel && modelStatus !== "idle" && (
                   <span
@@ -1332,7 +1176,10 @@ function App() {
               </button>
               {isPopupOpen && (
                 <Popup
-                  closeMenu={() => setIsPopupOpen(false)}
+                  closeMenu={() => {
+                    setIsPopupOpen(false)
+                    modelButtonRef.current?.focus()
+                  }}
                   changeModel={(model) => setActiveModel(model)}
                   availableModels={modelList}
                   activeModel={activeModel}
@@ -1365,6 +1212,8 @@ function App() {
           </div>
         </div>
       </div>
+
+      </main>
 
       </div>
 

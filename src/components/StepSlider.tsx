@@ -50,7 +50,7 @@ function StepSlider({ id, labels, index, onChange, disabled = false }: StepSlide
           <span
             key={label}
             className={`absolute -translate-x-1/2 text-[10px] tabular-nums whitespace-nowrap ${
-              i === index ? "font-semibold text-indigo-500" : "text-zinc-400 dark:text-zinc-500"
+              i === index ? "font-semibold text-indigo-600 dark:text-indigo-400" : "text-zinc-600 dark:text-zinc-400"
             }`}
             style={{ left: stepLeft(i, labels.length) }}
           >

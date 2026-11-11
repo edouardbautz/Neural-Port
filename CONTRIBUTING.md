@@ -33,8 +33,8 @@ npm run build
 
 Quelques repères :
 
-- **Tests** : toute logique ajoutée dans `src/lib/` doit être couverte par un test Vitest (`*.test.ts` à côté du fichier). Un bug corrigé doit idéalement venir avec un test qui l'aurait détecté.
-- **Interface** : testez dans un vrai navigateur, avec Ollama lancé, clair et sombre. Vérifiez aussi les états d'erreur (Ollama éteint, aucun modèle).
+- **Tests** : toute logique ajoutée dans `src/lib/` ou `src/hooks/` doit être couverte par un test Vitest (`*.test.ts` à côté du fichier ; `// @vitest-environment jsdom` en tête pour les hooks). Un bug corrigé doit idéalement venir avec un test qui l'aurait détecté.
+- **Interface** : testez dans un vrai navigateur, avec Ollama lancé, clair et sombre. Vérifiez aussi les états d'erreur (Ollama éteint, aucun modèle), le pilotage au clavier et un écran de téléphone (mode appareil de Chrome).
 - **Langue** : l'interface et les commentaires sont en français ; les noms de variables et de fonctions en anglais.
 - **Dépendances** : évitez d'en ajouter sans raison solide ; l'application doit rester légère.
 - **Confidentialité** : Neural-Port fonctionne entièrement en local. Aucune requête ne doit partir vers un service tiers (télémétrie, polices distantes, analytics…).
