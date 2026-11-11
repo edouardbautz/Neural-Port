@@ -5,6 +5,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+## [0.2.1] - 2026-11-11
+
 ### Corrigé
 - **Le modèle relit maintenant ce qu'il a écrit dans ses fichiers.** Avant, seul le *nom* d'un fichier créé par l'outil était rappelé au message suivant : le modèle ne pouvait ni en citer le contenu ni le modifier correctement. L'appel `create_file` est désormais rejoué dans l'historique, avec son contenu, au format natif d'Ollama (modèles avec outils ; texte sinon). Mesuré sur 6 conversations à plusieurs tours : 11 % → 92 % de réussite. Les fichiers très longs (> 8 000 caractères) sont tronqués au milieu.
 
@@ -65,6 +67,7 @@ Première version publique.
 - Échap et `Ctrl+K` fonctionnent pendant la vérification du modèle ; la dernière ligne du flux Ollama est toujours lue.
 - Les blocs de code n'affichent plus un rectangle par ligne de texte, et le code en ligne n'est plus entouré de backticks parasites.
 
-[Non publié]: https://github.com/edouardbautz/Neural-Port/compare/v0.2.0...HEAD
+[Non publié]: https://github.com/edouardbautz/Neural-Port/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/edouardbautz/Neural-Port/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/edouardbautz/Neural-Port/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/edouardbautz/Neural-Port/releases/tag/v0.1.0
