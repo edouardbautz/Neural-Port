@@ -72,6 +72,9 @@ function validSummary(summary: ConversationSummary | undefined, threadLength: nu
   return summary && summary.upTo <= threadLength - 1 ? summary : undefined
 }
 
+// Horloge hors du composant : les gestionnaires d'événements et le flux de génération peuvent la lire sans ambiguïté
+const timestamp = () => Date.now()
+
 function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
@@ -310,6 +313,18 @@ function App() {
   const conversationsRef = useRef(conversations)
   const dirtyRef = useRef(false)
   const loadedRef = useRef(conversations) // état lu au démarrage : tant qu'il n'a pas changé, rien à écrire
+  function saveHistory() {
+    if (!dirtyRef.current) return
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationsRef.current))
+      dirtyRef.current = false
+      setStorageFull(false)
+    } catch {
+      // Stockage plein ou bloqué : on le signale (bandeau) pour que l'utilisateur puisse exporter avant de tout perdre
+      setStorageFull(true)
+    }
+  }
+
   useEffect(() => {
     conversationsRef.current = conversations
     if (conversations === loadedRef.current) return
@@ -322,18 +337,6 @@ function App() {
     window.addEventListener("pagehide", saveHistory)
     return () => window.removeEventListener("pagehide", saveHistory)
   }, [])
-
-  function saveHistory() {
-    if (!dirtyRef.current) return
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(conversationsRef.current))
-      dirtyRef.current = false
-      setStorageFull(false)
-    } catch {
-      // Stockage plein ou bloqué : on le signale (bandeau) pour que l'utilisateur puisse exporter avant de tout perdre
-      setStorageFull(true)
-    }
-  }
 
   useEffect(() => {
     try {
@@ -484,7 +487,8 @@ function App() {
   }
 
   useEffect(() => {
-    void fetchModels()
+    const timer = setTimeout(() => void fetchModels(), 0)
+    return () => clearTimeout(timer)
   }, [ollamaUrl])
 
   // Ollama injoignable : on réessaie régulièrement, l'interface se rétablit toute seule dès qu'il répond
@@ -745,7 +749,7 @@ function App() {
       convId = makeId()
       const text = inputValue.trim().replace(/\s+/g, " ")
       const title = text.length > 50 ? text.slice(0, 50).trimEnd() + "…" : text
-      const now = Date.now()
+      const now = timestamp()
       const id = convId
       setConversations(prev => [
         { id, title, model: activeModel, messages: [userMessage], createdAt: now, updatedAt: now },
@@ -950,7 +954,7 @@ function App() {
                 if (firstChunk) {
                   setIsLoading(false)
                   firstChunk = false
-                  firstTokenAt = Date.now()
+                  firstTokenAt = timestamp()
                 }
 
                 // Appels de l'outil create_file : on ignore tout ce qui est mal formé
@@ -1039,7 +1043,7 @@ function App() {
           if (!overthought) throw error
           retryMessage = "Réflexion trop longue, je réponds directement…"
           carriedTokens += Math.round(thinkBufferRef.current.length / 4)
-          if (firstTokenAt !== null) carriedSec += (Date.now() - firstTokenAt) / 1000
+          if (firstTokenAt !== null) carriedSec += (timestamp() - firstTokenAt) / 1000
         } finally {
           controller.signal.removeEventListener("abort", onUserAbort)
         }
