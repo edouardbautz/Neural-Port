@@ -5,6 +5,8 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+## [0.2.0] - 2026-11-11
+
 ### Instructions personnalisées
 - Nouveau champ **Paramètres → Instructions personnalisées** (800 caractères, compteur en tokens, bouton Effacer), ajouté à la fin du prompt système. Formulation choisie par mesure : consignes suivies 57 % du temps contre 11 % si elles sont ignorées (7 cas, 5 essais).
 
@@ -60,5 +62,6 @@ Première version publique.
 - Échap et `Ctrl+K` fonctionnent pendant la vérification du modèle ; la dernière ligne du flux Ollama est toujours lue.
 - Les blocs de code n'affichent plus un rectangle par ligne de texte, et le code en ligne n'est plus entouré de backticks parasites.
 
-[Non publié]: https://github.com/edouardbautz/Neural-Port/compare/v0.1.0...HEAD
+[Non publié]: https://github.com/edouardbautz/Neural-Port/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/edouardbautz/Neural-Port/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/edouardbautz/Neural-Port/releases/tag/v0.1.0
