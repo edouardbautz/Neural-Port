@@ -10,6 +10,7 @@ import {
   messageText,
   planCompaction,
   requestChars,
+  serializeMessages,
   shouldCompact,
   splitChunks,
   summaryInjection,
@@ -100,10 +101,31 @@ describe("estimation de la requête", () => {
     expect(estimatePromptTokens(3600, 2, undefined)).toBeGreaterThan(1000)
   })
 
-  it("requestChars compte le résumé et les outils", () => {
-    const base = requestChars([user("abc")], undefined, false)
-    expect(requestChars([user("abc")], { text: "résumé", notes: [] }, false)).toBeGreaterThan(base)
-    expect(requestChars([user("abc")], undefined, true)).toBeGreaterThan(base)
+  it("requestChars compte le résumé et le surcoût des consignes", () => {
+    const base = requestChars([user("abc")], undefined, 0)
+    expect(requestChars([user("abc")], { text: "résumé", notes: [] }, 0)).toBeGreaterThan(base)
+    expect(requestChars([user("abc")], undefined, 500)).toBe(base + 500)
+  })
+
+  it("écrit les consignes de résumé dans la langue de la conversation", () => {
+    const fr = buildSummarizerMessages(undefined, "UTILISATEUR :\nJe voudrais réserver une table pour deux personnes dans le restaurant que vous m'avez conseillé.", 300)
+    const en = buildSummarizerMessages(undefined, "USER:\nI would like to book a table for two people at the restaurant that you recommended to me.", 300)
+    expect(fr[0].content).toContain("français")
+    expect(fr[1].content).toContain("ÉCHANGES")
+    expect(en[0].content).toContain("in English")
+    expect(en[1].content).toContain("CONVERSATION")
+    expect(en[0].content).not.toContain("français")
+  })
+  it("étiquette les rôles dans la langue de la conversation", () => {
+    const en = serializeMessages([{ role: "user", content: "I would like to book a table for two people tonight." }, { role: "assistant", content: "Sure, which restaurant would you like to go to?" }])
+    expect(en).toContain("USER:")
+    expect(en).not.toContain("UTILISATEUR")
+    const fr = serializeMessages([{ role: "user", content: "Je voudrais réserver une table pour deux personnes ce soir." }, { role: "assistant", content: "Bien sûr, dans quel restaurant souhaitez-vous aller ?" }])
+    expect(fr).toContain("UTILISATEUR :")
+  })
+  it("tient compte du résumé précédent pour choisir la langue", () => {
+    const en = buildSummarizerMessages("- The user plans a trip to Lisbon with her sister and has a budget of nine hundred euros.", "USER: ok", 300)
+    expect(en[1].content).toContain("CURRENT SUMMARY")
   })
 
   it("shouldCompact applique le seuil", () => {

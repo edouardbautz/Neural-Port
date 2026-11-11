@@ -1,4 +1,5 @@
-import type { Message } from "../App"
+import type { GeneratedFile } from "./files"
+import { detectLanguage } from "./language"
 import { estimateTokens, MESSAGE_OVERHEAD_TOKENS, ratioFrom, type Calibration } from "./tokens"
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -37,14 +38,18 @@ export const CHUNK_RATIO = 0.45
 export const SUMMARY_RATIO = 0.1
 export const SUMMARY_MIN_TOKENS = 200
 export const SUMMARY_MAX_TOKENS = 1200
-// Surcoût estimé de la consigne système et de la définition de l'outil quand ils sont envoyés
-export const TOOLS_OVERHEAD_CHARS = 700
 // Extraits conservés mot pour mot : un petit modèle déforme les faits qu'il résume, pas ceux qu'on lui recopie
 export const NOTE_MAX_CHARS = 220
 export const NOTES_RATIO = 0.06
 export const NOTES_MIN_TOKENS = 120
 
-type Msg = Pick<Message, "role" | "content" | "files" | "notice">
+// Ce dont la compaction a besoin d'un message (sans dépendre de l'interface)
+export interface Msg {
+  role: "user" | "assistant"
+  content: string
+  files?: GeneratedFile[]
+  notice?: boolean   // message d'information de l'appli, jamais envoyé au modèle
+}
 
 export function isSettings(value: unknown): value is CompactionSettings {
   if (!value || typeof value !== "object") return false
@@ -112,12 +117,12 @@ export function visibleThread(messages: Msg[], upTo: number): Msg[] {
   return messages.slice(upTo).filter(m => !m.notice)
 }
 
-// Nombre de caractères d'une requête (même calcul pour la mesure et pour l'estimation, donc cohérent)
-export function requestChars(thread: Msg[], summary: Pick<ConversationSummary, "text" | "notes"> | undefined, withTools: boolean): number {
+// Nombre de caractères d'une requête (même calcul pour la mesure et pour l'estimation, donc cohérent).
+// `overheadChars` : ce qui s'ajoute à la conversation (prompt système, définition de l'outil)
+export function requestChars(thread: Msg[], summary: Pick<ConversationSummary, "text" | "notes"> | undefined, overheadChars: number): number {
   let chars = thread.reduce((sum, m) => sum + messageText(m).length, 0)
   if (summary) chars += summaryInjection(summary).length
-  if (withTools) chars += TOOLS_OVERHEAD_CHARS
-  return chars
+  return chars + overheadChars
 }
 
 // Taille estimée du prochain prompt. Avec une mesure réelle précédente, on ne corrige que l'écart de contenu ;
@@ -200,28 +205,43 @@ function shrinkMessage(m: Msg, maxChars: number): Msg {
   return { ...m, files: undefined, content: `${text.slice(0, keep)}\n[… passage tronqué …]\n${text.slice(-keep)}` }
 }
 
+// Les étiquettes de rôle suivent la langue de la conversation : « UTILISATEUR : » dans une conversation anglaise
+// poussait le modèle à répondre en français (mesuré)
 export function serializeMessages(messages: Msg[]): string {
+  const english = detectLanguage(messages.map(messageText).join("\n")) === "en"
+  const labels = english ? { user: "USER", assistant: "ASSISTANT", sep: ":" } : { user: "UTILISATEUR", assistant: "ASSISTANT", sep: " :" }
   return messages
-    .map(m => `${m.role === "user" ? "UTILISATEUR" : "ASSISTANT"} :\n${messageText(m)}`)
+    .map(m => `${m.role === "user" ? labels.user : labels.assistant}${labels.sep}\n${messageText(m)}`)
     .join("\n\n---\n\n")
 }
 
-const SUMMARIZER_SYSTEM =
+const SUMMARIZER_SYSTEM_FR =
   "Tu résumes des conversations pour qu'elles tiennent dans une mémoire limitée. " +
   "Tu écris en français, de façon factuelle et dense. Tu recopies exactement les noms, nombres, dates et noms de fichiers. " +
   "Tu n'inventes rien : une information absente des échanges ne doit pas apparaître. Tu ne commentes jamais ta tâche."
 
-// Consigne envoyée au modèle pour fusionner l'éventuel résumé précédent et de nouveaux échanges
+const SUMMARIZER_SYSTEM_EN =
+  "You summarize conversations so they fit in a limited memory. Write the summary in English, factual and dense. " +
+  "Each bullet holds one precise fact. Copy names, numbers, dates, file names, identifiers and code snippets exactly as written: never translate or change them. " +
+  "Add nothing that is not in the conversation. Do not comment on your task."
+
+// Chez un petit modèle, la langue des consignes dicte celle du résumé (mesuré : consignes françaises sur une conversation
+// anglaise donnent un résumé français aux dates traduites, et inversement). On écrit donc les consignes dans la langue de la conversation.
 export function buildSummarizerMessages(previous: string | undefined, chunkText: string, targetTokens: number) {
-  const user =
-    (previous ? `RÉSUMÉ ACTUEL :\n${previous.trim()}\n\n` : "") +
-    `ÉCHANGES${previous ? " À AJOUTER AU RÉSUMÉ" : ""} :\n${chunkText}\n\n` +
-    `${previous ? "Réécris le résumé en y intégrant ces échanges" : "Écris le résumé de ces échanges"}, en une courte liste à puces ` +
-    `(environ ${targetTokens} tokens au maximum) : de quoi parle la conversation, les faits à retenir ` +
-    `(qui, quoi, chiffres, choix faits, fichiers ou code importants), et ce qui reste à faire. ` +
-    "Réponds uniquement par le résumé."
+  const english = detectLanguage(`${previous ?? ""}\n${chunkText}`) === "en"
+  const user = english
+    ? (previous ? `CURRENT SUMMARY:\n${previous.trim()}\n\n` : "") +
+      `CONVERSATION${previous ? " TO ADD TO THE SUMMARY" : ""}:\n${chunkText}\n\n` +
+      `${previous ? "Rewrite the summary to include this conversation" : "Summarize this conversation"} as a bulleted list (about ${targetTokens} tokens at most) ` +
+      "covering the topic, the facts and figures, the decisions made and what remains to do. Reply with the summary only."
+    : (previous ? `RÉSUMÉ ACTUEL :\n${previous.trim()}\n\n` : "") +
+      `ÉCHANGES${previous ? " À AJOUTER AU RÉSUMÉ" : ""} :\n${chunkText}\n\n` +
+      `${previous ? "Réécris le résumé en y intégrant ces échanges" : "Écris le résumé de ces échanges"}, en une courte liste à puces ` +
+      `(environ ${targetTokens} tokens au maximum) : de quoi parle la conversation, les faits à retenir ` +
+      `(qui, quoi, chiffres, choix faits, fichiers ou code importants), et ce qui reste à faire. ` +
+      "Réponds uniquement par le résumé."
   return [
-    { role: "system" as const, content: SUMMARIZER_SYSTEM },
+    { role: "system" as const, content: english ? SUMMARIZER_SYSTEM_EN : SUMMARIZER_SYSTEM_FR },
     { role: "user" as const, content: user }
   ]
 }

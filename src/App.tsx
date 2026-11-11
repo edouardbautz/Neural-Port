@@ -25,6 +25,7 @@ import { ratioFrom, type Calibration } from './lib/tokens'
 import { downloadText, extensionFor, extractCodeBlocks, filenameFromRequest, isFileRequest, makeFile, type GeneratedFile } from './lib/files'
 import { exportFilename, exportHistory, mergeConversations, parseImport } from './lib/history'
 import { finalStats, NO_THINK_TAGS, parseChatChunk, splitStreamLines, splitThinkTags, toolFiles, type ThinkTagState } from './lib/stream'
+import { buildSystemPrompt, CREATE_FILE_TOOL, TOOL_DEFINITION_CHARS } from './lib/prompts'
 import { useHistory } from './hooks/useHistory'
 import { useOllamaConnection } from './hooks/useOllamaConnection'
 import { checkModelLoaded, clearModelInfoCache, DEFAULT_OLLAMA_URL, getModelInfo, getOllamaUrl, loadSavedOllamaUrl, normalizeOllamaUrl, saveOllamaUrl, setOllamaUrl } from './lib/ollama'
@@ -81,26 +82,6 @@ const SUGGESTIONS = [
   "Résume ce texte en trois phrases",
   "Aide-moi à corriger mon code"
 ]
-
-const SYSTEM_PROMPT =
-  "Tu disposes de l'outil create_file, qui crée un fichier téléchargeable pour l'utilisateur. " +
-  "Utilise-le pour livrer le fichier demandé, avec son contenu complet et exact."
-
-const CREATE_FILE_TOOL = {
-  type: "function",
-  function: {
-    name: "create_file",
-    description: "Crée un fichier téléchargeable. À n'utiliser que si l'utilisateur a demandé un fichier.",
-    parameters: {
-      type: "object",
-      properties: {
-        filename: { type: "string", description: "Nom du fichier avec son extension, ex: main.py" },
-        content: { type: "string", description: "Contenu complet du fichier" }
-      },
-      required: ["filename", "content"]
-    }
-  }
-}
 
 function SunIcon() {
   return (
@@ -243,6 +224,8 @@ function App() {
 
   // Fichiers générés (outil create_file ou bouton sur un bloc de code). Le panneau se rouvre quand un nouveau fichier est prêt.
   const files = useMemo(() => messages.flatMap(m => m.files ?? []), [messages])
+  // Taille du prompt système sans outil, pour l'estimation affichée dans les Paramètres
+  const baseSystemChars = useMemo(() => buildSystemPrompt({ now: new Date(), model: activeModel, useTools: false }).length, [activeModel])
   const [panelClosed, setPanelClosed] = useState<{ id: string | null; count: number }>({ id: null, count: 0 })
   const panelOpen = files.length > 0 && !(panelClosed.id === activeId && panelClosed.count === files.length)
 
@@ -711,6 +694,9 @@ function App() {
       // l'appellerait sinon dès qu'on lui demande du code, et réfléchirait longuement à la consigne
       const info = await getModelInfo(activeModel!)
       const useTools = isFileRequest(userMessage.content) && info.tools
+      // Prompt système (stable dans la journée : voir buildSystemPrompt) et définition de l'outil : ils comptent dans la fenêtre de contexte
+      const systemPrompt = buildSystemPrompt({ now: new Date(), model: activeModel, useTools })
+      const promptOverhead = systemPrompt.length + (useTools ? TOOL_DEFINITION_CHARS : 0)
 
       // Compaction : si la requête risque de dépasser le seuil de la fenêtre de contexte, les anciens messages
       // sont résumés (les messages d'origine restent affichés et conservés)
@@ -718,7 +704,7 @@ function App() {
       let calib = state.calib
       let tail = visibleThread(thread, summary?.upTo ?? 0)
       if (compaction.enabled) {
-        const estimate = estimatePromptTokens(requestChars(tail, summary, useTools), tail.length, calib)
+        const estimate = estimatePromptTokens(requestChars(tail, summary, promptOverhead), tail.length, calib)
         if (shouldCompact(estimate, effectiveCtx, compaction.threshold)) {
           setLoadingMessage("Compaction de la conversation…")
           const result = await runCompaction(convId, thread, summary, calib, info, controller.signal, true)
@@ -731,11 +717,11 @@ function App() {
         }
       }
       // Taille (en caractères) de ce qui est réellement envoyé : sert à calibrer l'estimation avec la mesure d'Ollama
-      const sentChars = requestChars(tail, summary, useTools)
+      const sentChars = requestChars(tail, summary, promptOverhead)
 
       // On n'envoie que role/content à Ollama (stats exclues) ; les fichiers créés sont rappelés au modèle
       const history = tail.map(m => ({ role: m.role, content: messageText(m) }))
-      const systemContent = [useTools ? SYSTEM_PROMPT : "", summary ? summaryInjection(summary) : ""].filter(Boolean).join("\n\n")
+      const systemContent = [systemPrompt, summary ? summaryInjection(summary) : ""].filter(Boolean).join("\n\n")
 
       // Les modèles « réfléchisseurs » épuisent parfois leur limite de tokens en pensant, sans rien répondre.
       // Dans ce cas on relance une fois, sans réflexion, avant d'abandonner.
@@ -1256,7 +1242,7 @@ function App() {
           busy={busy}
           nextEstimate={
             activeConv
-              ? estimatePromptTokens(requestChars(visibleThread(messages, activeConv.summary?.upTo ?? 0), activeConv.summary, false), messages.length, activeConv.calib)
+              ? estimatePromptTokens(requestChars(visibleThread(messages, activeConv.summary?.upTo ?? 0), activeConv.summary, baseSystemChars), messages.length, activeConv.calib)
               : null
           }
           effectiveCtx={effectiveCtx}
