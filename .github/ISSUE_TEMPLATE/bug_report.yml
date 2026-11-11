@@ -1,0 +1,46 @@
+name: Bug
+description: Quelque chose ne fonctionne pas comme prévu
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de signaler ce problème. Vérifiez d'abord qu'il n'existe pas déjà dans les issues.
+  - type: textarea
+    id: description
+    attributes:
+      label: Ce qui se passe
+      description: Décrivez le problème et ce que vous attendiez à la place.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      placeholder: |
+        1. Ouvrir…
+        2. Cliquer sur…
+        3. Constater…
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Modèle Ollama utilisé
+      placeholder: llama3.2:3b
+  - type: input
+    id: ollama-version
+    attributes:
+      label: Version d'Ollama
+      description: Sortie de `ollama --version`
+  - type: input
+    id: browser
+    attributes:
+      label: Navigateur et système
+      placeholder: Firefox 133, Ubuntu 24.04
+  - type: textarea
+    id: logs
+    attributes:
+      label: Messages d'erreur
+      description: Console du navigateur (F12) ou capture d'écran, si pertinent.
+      render: shell

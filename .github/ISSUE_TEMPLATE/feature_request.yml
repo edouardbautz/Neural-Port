@@ -1,0 +1,26 @@
+name: Proposition
+description: Suggérer une amélioration ou une nouvelle fonctionnalité
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Le besoin
+      description: Quel problème rencontrez-vous, ou que voudriez-vous pouvoir faire ?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Ce que vous imaginez
+      description: Comment cela pourrait-il fonctionner ?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives envisagées
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: Je serais prêt·e à proposer une pull request
