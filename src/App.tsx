@@ -712,7 +712,15 @@ function App() {
     // Verrouille l'interface tout de suite : on ne peut pas relancer un envoi pendant la vérification du modèle
     setLoadingMessage("Préparation…")
     setIsLoading(true)
+    // Créé tout de suite : Échap et Ctrl+K voient la génération même pendant la vérification du modèle
+    const controller = new AbortController()
+    abortRef.current = controller
     const modelAlreadyLoaded = await checkModelLoaded(activeModel!)
+    if (controller.signal.aborted) {
+      abortRef.current = null
+      setIsLoading(false)
+      return
+    }
     setLoadingMessage(modelAlreadyLoaded ? "Traitement du contexte…" : "Chargement du modèle…")
 
     if (!modelAlreadyLoaded) {
@@ -728,9 +736,6 @@ function App() {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
-
-    const controller = new AbortController()
-    abortRef.current = controller
 
     // Nom de fichier cité par l'utilisateur (« crée jeu.py ») : il prime sur celui choisi par le modèle
     const requestedName = filenameFromRequest(userMessage.content)
@@ -788,6 +793,7 @@ function App() {
         const attemptCtl = new AbortController()
         const onUserAbort = () => attemptCtl.abort()
         controller.signal.addEventListener("abort", onUserAbort)
+        if (controller.signal.aborted) attemptCtl.abort()
         // Pour les modèles sans niveaux natifs, on limite nous-mêmes la durée de réflexion selon le niveau choisi
         const budget = THINK_LEVELS.find(l => l.id === thinkLevel)!.budgetChars
         const canOverthink = attempt === 0 && info.thinking && !info.thinkLevels && thinkLevel !== "off" && budget !== null
@@ -834,10 +840,10 @@ function App() {
 
           while (true) {
             const { done, value } = await reader.read()
-            if (done) break
 
-            const parts = (carry + decoder.decode(value, { stream: true })).split('\n')
-            carry = parts.pop() ?? ""
+            // À la fin du flux, la dernière ligne (sans retour à la ligne) est traitée aussi
+            const parts = (carry + (done ? decoder.decode() : decoder.decode(value, { stream: true }))).split('\n')
+            carry = done ? "" : (parts.pop() ?? "")
             const lines = parts.filter(line => line.trim())
 
             for (const line of lines) {
@@ -971,6 +977,7 @@ function App() {
                 // ignore incomplete JSON chunks
               }
             }
+            if (done) break
           }
         } catch (error) {
           if (!overthought) throw error
