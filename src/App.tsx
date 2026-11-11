@@ -60,6 +60,7 @@ const MODEL_KEY = "neural-port-model"
 const THINK_KEY = "neural-port-think"
 const COMPACT_KEY = "neural-port-compaction"
 const DEFAULT_CTX = 16384
+const STREAM_FLUSH_MS = 50
 const ACTIVE_KEY = "neural-port-active"
 
 // Un résumé n'est valable que s'il laisse au moins le dernier message utilisateur hors de sa portée
@@ -209,7 +210,7 @@ function App() {
     names => setActiveModel(current => (current && names.includes(current) ? current : undefined))
   )
   const [inputValue, setInputValue] = useState("")
-  const { conversations, setConversations, storageFull, getConversations } = useHistory()
+  const { conversations, setConversations, storageFull, getConversations, ready: historyReady } = useHistory()
   const [activeId, setActiveId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(ACTIVE_KEY)
@@ -228,6 +229,8 @@ function App() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isThinkingRef = useRef(false)
   const thinkTagsRef = useRef<ThinkTagState>(NO_THINK_TAGS)
+  const pendingContentRef = useRef<{ convId: string; content: string } | null>(null)
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -374,10 +377,10 @@ function App() {
   // Renvoie le curseur dans l'input dès qu'il est utilisable :
   // à l'arrivée sur la page, au choix d'un modèle, et à la fin de chaque réponse
   useEffect(() => {
-    if (!isLoading && !isStreaming && activeModel) {
+    if (!isLoading && !isStreaming && activeModel && historyReady) {
       textareaRef.current?.focus()
     }
-  }, [isLoading, isStreaming, activeModel])
+  }, [isLoading, isStreaming, activeModel, historyReady])
 
   // Applique une adresse saisie dans les Paramètres ; renvoie un message d'erreur si elle est invalide
   function changeOllamaUrl(input: string): string | null {
@@ -568,6 +571,30 @@ function App() {
   function clearSummary() {
     if (!activeConv || busy) return
     updateConversation(activeConv.id, c => ({ ...c, summary: undefined, calib: undefined }))
+  }
+
+  // Le texte du flux arrive par petits fragments (jusqu'à des dizaines par seconde) : on regroupe les mises à jour
+  // de l'affichage (≈ 20 par seconde) au lieu de refaire le rendu à chaque fragment
+  function flushContent() {
+    if (flushTimerRef.current) {
+      clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = null
+    }
+    const pending = pendingContentRef.current
+    pendingContentRef.current = null
+    if (!pending) return
+    updateMessages(pending.convId, prev => {
+      const last = prev.length - 1
+      if (last < 0 || prev[last].role !== "assistant") return prev
+      const updated = [...prev]
+      updated[last] = { ...updated[last], content: pending.content }
+      return updated
+    })
+  }
+
+  function queueContent(convId: string, content: string) {
+    pendingContentRef.current = { convId, content }
+    if (!flushTimerRef.current) flushTimerRef.current = setTimeout(flushContent, STREAM_FLUSH_MS)
   }
 
   // Rattache la réflexion du modèle à sa réponse pour pouvoir la relire
@@ -864,11 +891,7 @@ function App() {
                       updateMessages(convId, prev => [...prev, { role: "assistant", content: displayContent }])
                       hasAssistantMsgRef.current = true
                     } else {
-                      updateMessages(convId, prev => {
-                        const updated = [...prev]
-                        updated[updated.length - 1] = { ...updated[updated.length - 1], content: displayContent }
-                        return updated
-                      })
+                      queueContent(convId, displayContent)
                     }
                   }
                 }
@@ -885,6 +908,7 @@ function App() {
           if (firstTokenAt !== null) carriedSec += (timestamp() - firstTokenAt) / 1000
         } finally {
           controller.signal.removeEventListener("abort", onUserAbort)
+          flushContent() // dernier texte reçu, y compris après un arrêt ou une erreur
         }
 
         commitThinking(convId)
@@ -950,6 +974,8 @@ function App() {
   }
 
   const busy = isLoading || isStreaming
+  // Lecture de l'historique (quelques millisecondes) : on n'affiche rien plutôt qu'une liste vide qui clignote
+  if (!historyReady) return <div className="h-screen bg-zinc-50 dark:bg-zinc-950" />
   const canSend = !!activeModel && !busy
 
   return (

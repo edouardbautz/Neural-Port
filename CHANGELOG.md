@@ -5,6 +5,11 @@ Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) et le pr
 
 ## [Non publié]
 
+### Performance
+- Streaming fluide même dans une longue conversation : le Markdown n'est plus ré-analysé en entier à chaque fragment (rendu mémoïsé, mises à jour de l'affichage regroupées). Mesuré sur 60 messages riches en Markdown : **84 ms → 1,4 ms de calcul par fragment**, et plus aucune tâche bloquante.
+- Premier chargement allégé : le rendu Markdown et la coloration syntaxique sont chargés à part (script principal **616 → 298 kB**, 190 → 92 kB compressé).
+- Historique dans IndexedDB : plus de plafond de 5 Mo, et seules les conversations modifiées sont écrites (au lieu de sérialiser tout l'historique). L'ancien historique est migré automatiquement ; repli sur `localStorage` si IndexedDB est indisponible.
+
 ### Accessibilité
 - Contrastes de texte conformes WCAG AA en thème clair et sombre (vérifié avec axe-core : aucune violation sur téléphone, tablette et bureau).
 - Repères de page (`main`, titre `h1`, navigation et panneaux nommés), pilotage au clavier du menu des modèles (flèches, Échap, retour du focus), Échap ferme les panneaux et la liste mobile, zones de code accessibles au clavier, annonces d'état pour les lecteurs d'écran.

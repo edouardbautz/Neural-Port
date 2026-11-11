@@ -23,9 +23,9 @@ Neural-Port est une interface web qui s'exécute dans votre navigateur et dialog
 
 - l'exécution de script via le rendu Markdown des réponses (XSS) ;
 - la fuite de données de conversation vers un tiers ;
-- la corruption ou l'exposition du contenu du stockage local via un fichier d'import malveillant.
+- la corruption ou l'exposition du contenu du stockage local (IndexedDB) via un fichier d'import malveillant.
 
 ## Bonnes pratiques côté utilisateur
 
 - N'exposez pas Ollama sur Internet : il n'a pas d'authentification. Si vous l'ouvrez à votre réseau local (`OLLAMA_HOST`), limitez les origines autorisées (`OLLAMA_ORIGINS`) au strict nécessaire plutôt que `*`.
-- Vos conversations sont stockées dans le navigateur, en clair : sur une machine partagée, utilisez un profil dédié.
+- Vos conversations sont stockées dans le navigateur (IndexedDB), en clair : sur une machine partagée, utilisez un profil dédié.

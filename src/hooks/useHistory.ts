@@ -1,63 +1,87 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Conversation } from "../App"
-import { sanitizeConversations } from "../lib/history"
+import { getStore, loadConversations, type ConversationStore } from "../lib/conversationStore"
 
-export const HISTORY_KEY = "neural-port-history"
 // `conversations` change à chaque fragment de texte pendant le streaming : l'écriture est différée
 export const SAVE_DELAY_MS = 400
 
-// Lit l'historique mémorisé. Ce qui est récupérable est gardé ; un stockage illisible donne un historique vide.
-export function loadHistory(): Conversation[] {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY)
-    if (raw) {
-      const { conversations, repaired, skipped } = sanitizeConversations(JSON.parse(raw))
-      if (repaired > 0 || skipped > 0) console.warn(`Historique : ${repaired} conversation(s) réparée(s), ${skipped} élément(s) inutilisable(s) ignoré(s)`)
-      return conversations
-    }
-  } catch {
-    // Historique corrompu ou stockage indisponible : on repart de zéro
-  }
-  return []
-}
-
-// Historique des conversations, mémorisé dans le navigateur.
-// Seul un onglet qui a modifié l'historique l'écrit : sinon, il écraserait celui d'un autre onglet.
-export function useHistory() {
-  const [conversations, setConversations] = useState<Conversation[]>(loadHistory)
+// Historique des conversations, mémorisé dans le navigateur (IndexedDB).
+// - `ready` : la lecture initiale est terminée (avant, la liste est vide et rien n'est écrit)
+// - Seules les conversations modifiées (ou supprimées) sont écrites : un onglet ne peut pas écraser celles d'un autre.
+export function useHistory(storeSource?: Promise<ConversationStore> | ConversationStore) {
+  const [source] = useState(() => storeSource ?? getStore())
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [ready, setReady] = useState(false)
   const [storageFull, setStorageFull] = useState(false)
-  const latest = useRef(conversations)
-  const dirty = useRef(false)
-  const loaded = useRef(conversations) // état lu au démarrage : tant qu'il n'a pas changé, rien à écrire
+  const store = useRef<ConversationStore | null>(null)
+  const latest = useRef<Conversation[]>([])
+  const persisted = useRef(new Map<string, Conversation>()) // ce qui est déjà enregistré (par référence)
+  const queue = useRef<Promise<void>>(Promise.resolve())
 
-  const save = useCallback(() => {
-    if (!dirty.current) return
-    try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(latest.current))
-      dirty.current = false
-      setStorageFull(false)
-    } catch {
-      // Stockage plein ou bloqué : on le signale (bandeau) pour que l'utilisateur puisse exporter avant de tout perdre
-      setStorageFull(true)
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const opened = await source
+      const loaded = await loadConversations(opened)
+      if (cancelled) return
+      store.current = opened
+      persisted.current = new Map(loaded.map(c => [c.id, c]))
+      latest.current = loaded
+      setConversations(loaded)
+      setReady(true)
+    })()
+    return () => {
+      cancelled = true
     }
+  }, [source])
+
+  // Les écritures s'enchaînent une par une : la suivante part de ce que la précédente a réellement enregistré
+  const save = useCallback((): Promise<void> => {
+    queue.current = queue.current.then(async () => {
+      const target = store.current
+      if (!target) return
+      const current = latest.current
+      const ids = new Set(current.map(c => c.id))
+      const changed = current.filter(c => persisted.current.get(c.id) !== c)
+      const removed = [...persisted.current.keys()].filter(id => !ids.has(id))
+      if (changed.length === 0 && removed.length === 0) return
+      try {
+        await target.save(changed, removed)
+        for (const c of changed) persisted.current.set(c.id, c)
+        for (const id of removed) persisted.current.delete(id)
+        setStorageFull(false)
+      } catch {
+        // Stockage plein ou bloqué : on le signale (bandeau) pour que l'utilisateur puisse exporter avant de tout perdre.
+        // Rien n'est marqué comme enregistré : la prochaine modification retentera.
+        setStorageFull(true)
+      }
+    })
+    return queue.current
   }, [])
 
   useEffect(() => {
     latest.current = conversations
-    if (conversations === loaded.current) return
-    dirty.current = true
-    const timer = setTimeout(save, SAVE_DELAY_MS)
+    if (!ready) return
+    const timer = setTimeout(() => void save(), SAVE_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [conversations, save])
+  }, [conversations, ready, save])
 
-  // Fermeture de la page : on écrit tout de suite ce qui n'a pas encore été écrit
+  // Page masquée ou fermée : on n'attend pas le délai
   useEffect(() => {
-    window.addEventListener("pagehide", save)
-    return () => window.removeEventListener("pagehide", save)
+    const flush = () => void save()
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush()
+    }
+    window.addEventListener("pagehide", flush)
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => {
+      window.removeEventListener("pagehide", flush)
+      document.removeEventListener("visibilitychange", onVisibility)
+    }
   }, [save])
 
   // Valeur la plus récente, lisible depuis un gestionnaire d'événements sans attendre un nouveau rendu
   const getConversations = useCallback(() => latest.current, [])
 
-  return { conversations, setConversations, storageFull, getConversations }
+  return { conversations, setConversations, storageFull, getConversations, ready }
 }

@@ -73,7 +73,9 @@ Remplacez l'origine par l'adresse réelle de l'application (ou `*` pour tout aut
 
 ### Vos données
 
-Les conversations et les réglages sont conservés dans le `localStorage` de votre navigateur, en clair. Utilisez **Paramètres → Données** pour les exporter, les sauvegarder ou les transférer vers un autre navigateur. Si le stockage du navigateur est plein, un bandeau vous prévient pour que vous puissiez exporter avant de perdre quoi que ce soit.
+Les conversations sont conservées dans l'**IndexedDB** de votre navigateur (pas de plafond de 5 Mo, et seules les conversations modifiées sont réécrites), les réglages dans son `localStorage`. Rien n'est chiffré : sur une machine partagée, utilisez un profil dédié. Les conversations d'une version antérieure (stockées dans `localStorage`) sont migrées automatiquement au premier lancement.
+
+Utilisez **Paramètres → Données** pour exporter vos conversations, les sauvegarder ou les transférer vers un autre navigateur. Si le stockage du navigateur est plein ou refusé, un bandeau vous prévient pour que vous puissiez exporter avant de perdre quoi que ce soit.
 
 ## Développement
 
@@ -84,7 +86,7 @@ npm test          # tests unitaires (Vitest)
 npm run build     # vérification TypeScript + build de production
 ```
 
-Stack : React 19, TypeScript, Vite, Tailwind CSS 4, react-markdown, Vitest.
+Stack : React 19, TypeScript, Vite, Tailwind CSS 4, react-markdown, Vitest. Le rendu Markdown et la coloration syntaxique sont chargés à part, pour un premier affichage rapide.
 
 ```
 src/
